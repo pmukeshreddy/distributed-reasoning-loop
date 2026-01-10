@@ -1,0 +1,68 @@
+# Distributed Reasoning Loop Configuration
+
+# Phase 1: Synthetic Data Generator
+data_generator:
+  teacher_model: "Qwen/Qwen2.5-7B-Instruct"  # Large model for CoT generation
+  student_model: "Qwen/Qwen2.5-7B-Instruct"        # Small model for RL training
+  num_cot_paths: 10                                # Number of CoT paths per problem
+  max_new_tokens: 2048                             # Max tokens for generation
+  temperature: 0.8                                 # Sampling temperature
+  
+  # Datasets
+  datasets:
+    math: "gsm8k"                                  # GSM8K for math reasoning
+    code: "humaneval"                              # HumanEval for code generation
+  
+  # Verification
+  verification:
+    code_timeout: 30                               # Timeout for code execution (seconds)
+    math_timeout: 10                               # Timeout for math verification (seconds)
+
+# Phase 2: Distributed Orchestration
+orchestration:
+  kafka:
+    bootstrap_servers: ["localhost:9092"]
+    topics:
+      raw_reasoning_data: "raw_reasoning_data"
+      verified_paths: "verified_paths"
+      training_data: "training_data"
+  
+  ray:
+    num_workers: 4                                 # Number of Ray workers
+    object_store_memory: "4GB"                     # Ray object store memory
+  
+  # KV-Cache Optimization
+  kv_cache:
+    max_cache_size: "16GB"                         # Maximum KV cache size
+    eviction_policy: "lru"                        # Cache eviction policy
+
+# Phase 3: RL Training
+training:
+  method: "dpo"                                    # Training method: dpo or ppo
+  batch_size: 2                                    # Training batch size
+  learning_rate: 1e-6                              # Learning rate
+  num_epochs: 1                                    # Number of training epochs
+  
+  # DPO specific
+  dpo:
+    beta: 0.1                                      # DPO beta parameter
+    max_length: 2048                               # Maximum sequence length
+    max_prompt_length: 512                         # Maximum prompt length
+  
+  # Evaluation
+  evaluation:
+    num_paths: 16                                  # Number of paths to sample at test time
+    reward_model: "trained_reward_model"          # Path to reward model
+
+# Speculative Decoding
+speculative_decoding:
+  draft_model: "Qwen/Qwen2.5-1.5B-Instruct"       # Small model for drafting
+  target_model: "Qwen/Qwen2.5-7B-Instruct" # Large model for verification
+  max_speculative_tokens: 5                        # Max speculative tokens per step
+
+# General
+general:
+  seed: 42                                         # Random seed
+  log_level: "INFO"                                # Logging level
+  output_dir: "./outputs"                          # Output directory
+  cache_dir: "./cache"                             # Cache directory

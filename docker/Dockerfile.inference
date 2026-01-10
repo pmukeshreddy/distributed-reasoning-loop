@@ -1,0 +1,40 @@
+# Inference Server Dockerfile
+# vLLM/SGLang inference server for reasoning models
+
+FROM nvidia/cuda:12.1-devel-ubuntu22.04
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-dev \
+    python3-pip \
+    build-essential \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set Python 3.11 as default
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
+
+WORKDIR /app
+
+# Install PyTorch with CUDA
+RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# Install vLLM
+RUN pip install --no-cache-dir vllm
+
+# Install other dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy source code
+COPY src/ ./src/
+COPY setup.py .
+RUN pip install -e .
+
+# Expose vLLM API port
+EXPOSE 8000
+
+# Default: start vLLM API server
+CMD ["python", "-m", "vllm.entrypoints.openai.api_server", "--model", "${MODEL_NAME}", "--tensor-parallel-size", "1"]
