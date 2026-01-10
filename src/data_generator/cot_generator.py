@@ -255,6 +255,9 @@ Explain your approach, then provide the complete solution in a Python code block
         """Generate multiple reasoning paths using SGLang with RadixAttention."""
         import sglang as sgl
         
+        # Connect to running SGLang server
+        sgl.set_default_backend(sgl.RuntimeEndpoint("http://127.0.0.1:30000"))
+        
         @sgl.function
         def cot_generation(s, problem, system_prompt):
             s += sgl.system(system_prompt)

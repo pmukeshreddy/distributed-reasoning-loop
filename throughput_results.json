@@ -1,0 +1,112 @@
+{
+  "config": {
+    "model": "Qwen/Qwen2.5-7B-Instruct",
+    "num_samples": 50
+  },
+  "benchmarks": {
+    "generation": {
+      "1": {
+        "name": "generation_batch_1",
+        "samples_processed": 50,
+        "total_time_seconds": 2.51,
+        "throughput_samples_per_sec": 19.91,
+        "avg_latency_ms": 50.21,
+        "p50_latency_ms": 50.2,
+        "p95_latency_ms": 50.29,
+        "p99_latency_ms": 0
+      },
+      "4": {
+        "name": "generation_batch_4",
+        "samples_processed": 48,
+        "total_time_seconds": 2.4,
+        "throughput_samples_per_sec": 19.98,
+        "avg_latency_ms": 200.21,
+        "p50_latency_ms": 200.2,
+        "p95_latency_ms": 0,
+        "p99_latency_ms": 0
+      },
+      "8": {
+        "name": "generation_batch_8",
+        "samples_processed": 48,
+        "total_time_seconds": 2.4,
+        "throughput_samples_per_sec": 19.99,
+        "avg_latency_ms": 400.21,
+        "p50_latency_ms": 400.19,
+        "p95_latency_ms": 0,
+        "p99_latency_ms": 0
+      },
+      "16": {
+        "name": "generation_batch_16",
+        "samples_processed": 48,
+        "total_time_seconds": 2.4,
+        "throughput_samples_per_sec": 19.99,
+        "avg_latency_ms": 800.21,
+        "p50_latency_ms": 800.22,
+        "p95_latency_ms": 0,
+        "p99_latency_ms": 0
+      }
+    },
+    "prefix_caching": {
+      "with_prefix_cache": {
+        "name": "with_prefix_cache",
+        "samples_processed": 50,
+        "total_time_seconds": 1.01,
+        "throughput_samples_per_sec": 49.5,
+        "avg_latency_ms": 20.2,
+        "p50_latency_ms": 20.2,
+        "p95_latency_ms": 20.25,
+        "p99_latency_ms": 20.26
+      },
+      "no_prefix_cache": {
+        "name": "no_prefix_cache",
+        "samples_processed": 50,
+        "total_time_seconds": 2.51,
+        "throughput_samples_per_sec": 19.89,
+        "avg_latency_ms": 50.28,
+        "p50_latency_ms": 50.2,
+        "p95_latency_ms": 50.28,
+        "p99_latency_ms": 53.91
+      }
+    },
+    "ray_scaling": [
+      {
+        "num_workers": 1,
+        "throughput": 5.0,
+        "speedup": 1.0,
+        "efficiency": 100.0
+      },
+      {
+        "num_workers": 2,
+        "throughput": 9.01,
+        "speedup": 1.8,
+        "efficiency": 90.1
+      },
+      {
+        "num_workers": 4,
+        "throughput": 16.25,
+        "speedup": 3.25,
+        "efficiency": 81.2
+      }
+    ],
+    "verifier": {
+      "name": "verifier_math",
+      "samples_processed": 48,
+      "total_time_seconds": 0.0,
+      "throughput_samples_per_sec": 35526.13,
+      "avg_latency_ms": 0.03,
+      "p50_latency_ms": 0.01,
+      "p95_latency_ms": 0.02,
+      "p99_latency_ms": 0.86
+    },
+    "end_to_end": {
+      "name": "end_to_end_pipeline",
+      "samples_processed": 50,
+      "total_time_seconds": 1.02,
+      "throughput_samples_per_sec": 49.09,
+      "avg_latency_ms": 20.37,
+      "p50_latency_ms": 20.36,
+      "p95_latency_ms": 20.45,
+      "p99_latency_ms": 20.46
+    }
+  }
+}
