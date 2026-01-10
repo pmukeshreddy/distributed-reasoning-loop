@@ -30,7 +30,7 @@ class GRPOConfig:
     clip_range: float = 0.2  # PPO-style clipping
     
     # Training
-    learning_rate: float = 1e-6
+    learning_rate: float = 5e-5
     batch_size: int = 1
     gradient_accumulation_steps: int = 8
     num_epochs: int = 1
