@@ -232,33 +232,40 @@ class ModelEvaluator:
 
 
 def load_held_out_problems(num_problems: int = 50) -> List[Dict]:
-    """Load held-out evaluation problems."""
+    """Load held-out evaluation problems from GSM8K."""
     try:
-        from data_generator.dataset_loader import DatasetLoader
-        loader = DatasetLoader()
-        # Use test split for held-out evaluation
-        problems = loader.load_gsm8k(split="test", num_samples=num_problems)
-        logger.info(f"Loaded {len(problems)} held-out problems from GSM8K test")
+        from datasets import load_dataset
+        ds = load_dataset("gsm8k", "main", split=f"test[:{num_problems}]")
+        problems = []
+        for item in ds:
+            # Extract final answer from GSM8K format (#### answer)
+            answer = item["answer"].split("####")[-1].strip()
+            problems.append({
+                "prompt": item["question"],
+                "answer": answer,
+            })
+        logger.info(f"Loaded {len(problems)} GSM8K test problems")
         return problems
     except Exception as e:
         logger.warning(f"Could not load GSM8K: {e}")
-        # Generate synthetic held-out problems
+        # Fallback to synthetic word problems
         import random
         problems = []
+        templates = [
+            ("A store has {a} items. They sell {b} items and receive {c} new items. How many items do they have now?", lambda a,b,c: a - b + c),
+            ("John has {a} dollars. He spends {b} dollars and earns {c} dollars. How much does he have?", lambda a,b,c: a - b + c),
+            ("A train travels {a} miles in the first hour, {b} miles in the second hour. How far did it travel in total?", lambda a,b,c: a + b),
+            ("There are {a} students. {b} leave and {c} new students join. How many students are there now?", lambda a,b,c: a - b + c),
+        ]
         for i in range(num_problems):
-            a, b = random.randint(10, 100), random.randint(10, 100)
-            op = random.choice(['+', '-', '*'])
-            if op == '+':
-                ans = a + b
-            elif op == '-':
-                ans = a - b
-            else:
-                ans = a * b
+            template, func = random.choice(templates)
+            a, b, c = random.randint(20, 100), random.randint(5, 30), random.randint(10, 50)
+            b = min(b, a - 1)  # Ensure no negative results
             problems.append({
-                "prompt": f"Calculate: {a} {op} {b} = ?",
-                "answer": str(ans),
+                "prompt": template.format(a=a, b=b, c=c),
+                "answer": str(func(a, b, c)),
             })
-        logger.info(f"Generated {len(problems)} synthetic problems")
+        logger.info(f"Generated {len(problems)} synthetic word problems")
         return problems
 
 
