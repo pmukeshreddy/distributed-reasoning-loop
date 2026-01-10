@@ -194,7 +194,14 @@ def visualize_training(log_dir: str, output_format: str = "ascii"):
     summary = logger_obj.get_summary()
     print("\n📊 Training Summary:")
     print(f"  Total steps: {summary['total_steps']}")
-    print(f"  Loss: {metrics[0].loss:.4f} → {summary['final_loss']:.4f} ({summary['loss_reduction_pct']:.1f}% reduction)")
+    # Check if GRPO-style (negative loss)
+    is_grpo = metrics[0].loss < 0 or summary['final_loss'] < 0
+    if is_grpo:
+        delta = summary['final_loss'] - metrics[0].loss
+        direction = "↓ more negative" if delta < 0 else "↑ less negative"
+        print(f"  Loss: {metrics[0].loss:.4f} → {summary['final_loss']:.4f} ({direction}, Δ={abs(delta):.4f})")
+    else:
+        print(f"  Loss: {metrics[0].loss:.4f} → {summary['final_loss']:.4f} ({summary['loss_reduction_pct']:.1f}% reduction)")
     if summary['final_reward_margin'] != 0:
         print(f"  Reward margin: {summary['final_reward_margin']:.4f} (improvement: {summary['margin_improvement']:.4f})")
     if summary['avg_kl_divergence'] != 0:
@@ -273,7 +280,19 @@ def visualize_training(log_dir: str, output_format: str = "ascii"):
     # Analysis
     insights = []
     
-    if summary['loss_reduction_pct'] > 10:
+    # For GRPO/DPO, loss goes MORE NEGATIVE when training works
+    # Check if this looks like GRPO (loss starts negative or becomes negative)
+    is_grpo_style = summary['initial_loss'] < 0 or summary['final_loss'] < 0
+    
+    if is_grpo_style:
+        # GRPO: more negative = better
+        loss_improved = summary['final_loss'] < summary['initial_loss']
+        if loss_improved:
+            improvement = abs(summary['final_loss'] - summary['initial_loss'])
+            insights.append(f"✅ GRPO loss improving (more negative) - Δ={improvement:.4f}")
+        else:
+            insights.append("⚠️ GRPO loss not improving - check learning rate")
+    elif summary['loss_reduction_pct'] > 10:
         insights.append("✅ Loss decreasing significantly - training is working")
     elif summary['loss_reduction_pct'] > 0:
         insights.append("⚠️ Loss decreasing slowly - may need more epochs")

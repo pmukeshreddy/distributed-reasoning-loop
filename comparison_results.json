@@ -1,0 +1,31 @@
+{
+  "base": {
+    "model_name": "Qwen/Qwen2.5-7B-Instruct",
+    "pass_at_1": 0.96,
+    "pass_at_4": 1.0,
+    "pass_at_8": 1.0,
+    "avg_response_length": 96.865,
+    "avg_reasoning_steps": 1.6525,
+    "inference_time_per_problem": 5.096051487922669,
+    "total_problems": 50,
+    "correct_at_1": 48
+  },
+  "finetuned": {
+    "model_name": "./grpo_output_v2",
+    "pass_at_1": 1.0,
+    "pass_at_4": 1.0,
+    "pass_at_8": 1.0,
+    "avg_response_length": 272.3425,
+    "avg_reasoning_steps": 4.8075,
+    "inference_time_per_problem": 12.481951379776001,
+    "total_problems": 50,
+    "correct_at_1": 50
+  },
+  "improvements": {
+    "pass_at_1": 4.0000000000000036,
+    "pass_at_4": 0.0,
+    "pass_at_8": 0.0
+  },
+  "held_out_problems": 50,
+  "timestamp": "2026-01-10T02:31:55.606903"
+}
