@@ -293,29 +293,28 @@ class MATHLoader(DatasetLoader):
             
             # Try multiple MATH dataset sources
             dataset = None
+            eleutherai_config = self.subject or "algebra"  # Use user's subject if specified
             dataset_sources = [
-                ("hendrycks/competition_math", None),  # Original
-                ("lighteval/MATH", None),              # LightEval mirror  
-                ("EleutherAI/hendrycks_math", self.split),  # EleutherAI mirror
+                ("hendrycks/competition_math", None, self.split),
+                ("lighteval/MATH", None, self.split),
+                ("EleutherAI/hendrycks_math", eleutherai_config, self.split),
             ]
             
-            for source, config in dataset_sources:
+            for source, config, split in dataset_sources:
                 try:
                     logger.info(f"Trying MATH dataset from: {source}")
                     if config:
                         dataset = load_dataset(
                             source,
                             config,
-                            split=self.split,
+                            split=split,
                             cache_dir=self.cache_dir,
-                            trust_remote_code=True,
                         )
                     else:
                         dataset = load_dataset(
                             source,
-                            split=self.split,
+                            split=split,
                             cache_dir=self.cache_dir,
-                            trust_remote_code=True,
                         )
                     logger.info(f"Successfully loaded MATH from {source}")
                     break
