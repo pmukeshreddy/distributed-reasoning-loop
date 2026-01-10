@@ -78,7 +78,7 @@ GRPO/DPO training shows correct learning dynamics:
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/distributed-reasoning-loop.git
+git clone https://github.com/pmukeshreddy/distributed-reasoning-loop.git
 cd distributed-reasoning-loop
 
 # Install dependencies
