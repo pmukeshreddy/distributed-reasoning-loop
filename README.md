@@ -19,7 +19,7 @@ A high-performance distributed pipeline for synthetic data generation, preferenc
 Results achieved after **GRPO post-training** on a **Qwen2.5-1.5B-Instruct** base using the distributed reasoning loop.
 
 **Dataset:** GSM8K (Held-out test set)  
-**Method:** GRPO (3 Epochs, Verified Rewards)
+**Method:** GRPO 
 
 | Metric | Base Model | Fine-tuned (GRPO) | Improvement (Δ) |
 |--------|-----------:|------------------:|----------------:|
