@@ -234,9 +234,7 @@ docker-compose up -d --scale ray-worker=8
 - [Ray](https://ray.io/) - Distributed computing
 - [GSM8K](https://arxiv.org/abs/2110.14168) - Math reasoning benchmark
 
-## 📄 License
 
-MIT License
 
 ## 🙏 Acknowledgments
 
