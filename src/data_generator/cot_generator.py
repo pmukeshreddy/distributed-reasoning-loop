@@ -248,52 +248,60 @@ Explain your approach, then provide the complete solution in a Python code block
         return [results[prob["id"]] for prob in problems]
     
     def generate_paths_sglang(
-        self,
-        problems: List[Dict[str, str]],
-        problem_type: str = "math",
-    ) -> List[List[ReasoningPath]]:
-        """Generate multiple reasoning paths using SGLang with RadixAttention."""
-        import sglang as sgl
+    self,
+    problems: List[Dict[str, str]],
+    problem_type: str = "math",
+) -> List[List[ReasoningPath]]:
         
-        # Connect to running SGLang server
-        sgl.set_default_backend(sgl.RuntimeEndpoint("http://127.0.0.1:30000"))
-        
-        @sgl.function
-        def cot_generation(s, problem, system_prompt):
-            s += sgl.system(system_prompt)
-            s += sgl.user(problem)
-            s += sgl.assistant(sgl.gen("reasoning", max_tokens=self.config.max_new_tokens))
+        """Generate multiple reasoning paths using SGLang server API - BATCHED."""
+        import requests
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         
         system_prompt = self.MATH_SYSTEM_PROMPT if problem_type == "math" else self.CODE_SYSTEM_PROMPT
-        
         results = {prob["id"]: [] for prob in problems}
         
-        # SGLang batch processing with prefix caching
-        for prob in problems:
-            # Generate multiple paths - SGLang will cache the prefix
-            states = []
-            for _ in range(self.config.num_paths):
-                state = cot_generation.run(
-                    problem=prob["problem"],
-                    system_prompt=system_prompt,
-                    temperature=self.config.temperature,
-                    top_p=self.config.top_p,
-                )
-                states.append(state)
+        url = "http://127.0.0.1:30000/v1/chat/completions"
+        
+        def make_request(prob, path_idx):
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prob["problem"]}
+            ]
+            response = requests.post(url, json={
+                "model": self.config.model_name,
+                "messages": messages,
+                "max_tokens": self.config.max_new_tokens,
+                "temperature": self.config.temperature,
+                "top_p": self.config.top_p,
+            }, timeout=120)
             
-            for state in states:
-                path = ReasoningPath(
+            if response.status_code == 200:
+                data = response.json()
+                reasoning = data["choices"][0]["message"]["content"]
+                return prob["id"], ReasoningPath(
                     problem_id=prob["id"],
                     problem=prob["problem"],
-                    reasoning=state["reasoning"],
+                    reasoning=reasoning,
                     generation_metadata={
                         "model": self.config.model_name,
                         "temperature": self.config.temperature,
                         "backend": "sglang",
-                        "radix_cache_enabled": self.config.enable_radix_cache,
                     }
                 )
-                results[prob["id"]].append(path)
+            return None
+        
+        # Parallel requests
+        with ThreadPoolExecutor(max_workers=32) as executor:
+            futures = []
+            for prob in problems:
+                for i in range(self.config.num_paths):
+                    futures.append(executor.submit(make_request, prob, i))
+            
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    prob_id, path = result
+                    results[prob_id].append(path)
         
         return [results[prob["id"]] for prob in problems]
     

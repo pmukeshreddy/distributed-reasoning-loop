@@ -2,33 +2,33 @@
   "pass_at_k": {
     "1": {
       "k": 1,
-      "accuracy": 3.33,
-      "num_problems": 30,
+      "accuracy": 1.0,
+      "num_problems": 100,
       "num_correct": 1,
-      "avg_generations_per_problem": 8,
-      "total_tokens_generated": 24000,
+      "avg_generations_per_problem": 10,
+      "total_tokens_generated": 100000,
       "total_time_seconds": 0.0,
-      "tokens_per_second": 125047572.67
+      "tokens_per_second": 145585005.21
     },
-    "4": {
-      "k": 4,
-      "accuracy": 6.67,
-      "num_problems": 30,
-      "num_correct": 2,
-      "avg_generations_per_problem": 8,
-      "total_tokens_generated": 24000,
+    "5": {
+      "k": 5,
+      "accuracy": 1.0,
+      "num_problems": 100,
+      "num_correct": 1,
+      "avg_generations_per_problem": 10,
+      "total_tokens_generated": 100000,
       "total_time_seconds": 0.0,
-      "tokens_per_second": 125047572.67
+      "tokens_per_second": 145585005.21
     },
-    "8": {
-      "k": 8,
-      "accuracy": 6.67,
-      "num_problems": 30,
+    "10": {
+      "k": 10,
+      "accuracy": 2.0,
+      "num_problems": 100,
       "num_correct": 2,
-      "avg_generations_per_problem": 8,
-      "total_tokens_generated": 24000,
+      "avg_generations_per_problem": 10,
+      "total_tokens_generated": 100000,
       "total_time_seconds": 0.0,
-      "tokens_per_second": 125047572.67
+      "tokens_per_second": 145585005.21
     }
   }
 }

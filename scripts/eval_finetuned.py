@@ -7,8 +7,8 @@ Generates metrics for README and validates training effectiveness.
 
 Usage:
     python scripts/eval_finetuned.py \
-        --base-model Qwen/Qwen2.5-7B-Instruct \
-        --finetuned-model ./grpo_output_v2 \
+        --base-model Qwen/Qwen2.5-1.5B-Instruct \
+        --finetuned-model ./outputs/grpo_model \
         --num-problems 50
 """
 
@@ -60,11 +60,12 @@ class ComparisonResults:
 
 
 class ModelEvaluator:
-    """Evaluates a single model on reasoning tasks."""
+    """Evaluates a single model on reasoning tasks with batching."""
     
-    def __init__(self, model_path: str, device: str = "cuda"):
+    def __init__(self, model_path: str, device: str = "cuda", batch_size: int = 8):
         self.model_path = model_path
         self.device = device
+        self.batch_size = batch_size
         self.model = None
         self.tokenizer = None
         
@@ -78,8 +79,10 @@ class ModelEvaluator:
             self.model_path,
             trust_remote_code=True,
         )
+        # Required for batching: pad on the left so the model generates from the end
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.tokenizer.padding_side = "left"
         
         self.model = AutoModelForCausalLM.from_pretrained(
             self.model_path,
@@ -97,7 +100,7 @@ class ModelEvaluator:
         max_tokens: int = 1024,
         temperature: float = 0.7,
     ) -> List[str]:
-        """Generate n responses for a prompt."""
+        """Generate n responses for a prompt using batching."""
         messages = [{"role": "user", "content": prompt}]
         
         input_text = self.tokenizer.apply_chat_template(
@@ -106,35 +109,43 @@ class ModelEvaluator:
             add_generation_prompt=True,
         )
         
+        # Expand prompt to n_samples for batching
+        batch_prompts = [input_text] * n_samples
+        
         inputs = self.tokenizer(
-            input_text,
+            batch_prompts,
             return_tensors="pt",
             truncation=True,
+            padding=True,
             max_length=2048,
         ).to(self.device)
         
         responses = []
         with torch.no_grad():
-            for _ in range(n_samples):
+            # Process in sub-batches to manage VRAM
+            for i in range(0, n_samples, self.batch_size):
+                sub_batch = {k: v[i : i + self.batch_size] for k, v in inputs.items()}
                 outputs = self.model.generate(
-                    **inputs,
+                    **sub_batch,
                     max_new_tokens=max_tokens,
                     temperature=temperature,
                     do_sample=True,
                     top_p=0.95,
                     pad_token_id=self.tokenizer.pad_token_id,
                 )
-                response = self.tokenizer.decode(
-                    outputs[0][inputs["input_ids"].shape[1]:],
-                    skip_special_tokens=True,
+                
+                # Decode only the generated part
+                prompt_len = sub_batch["input_ids"].shape[1]
+                decoded = self.tokenizer.batch_decode(
+                    outputs[:, prompt_len:], 
+                    skip_special_tokens=True
                 )
-                responses.append(response)
+                responses.extend(decoded)
         
         return responses
     
     def check_answer(self, response: str, ground_truth: str) -> bool:
         """Check if response contains correct answer."""
-        # Extract answer from response (look for #### pattern or boxed)
         patterns = [
             r'####\s*(-?\d+\.?\d*)',
             r'\\boxed\{([^}]+)\}',
@@ -150,12 +161,10 @@ class ModelEvaluator:
                 break
         
         if response_answer is None:
-            # Try to find last number
             nums = re.findall(r'-?\d+\.?\d*', response)
             if nums:
                 response_answer = nums[-1]
         
-        # Clean ground truth
         gt_clean = ground_truth.strip().replace(",", "").replace("$", "")
         gt_nums = re.findall(r'-?\d+\.?\d*', gt_clean)
         gt_answer = gt_nums[-1] if gt_nums else gt_clean
@@ -163,7 +172,6 @@ class ModelEvaluator:
         if response_answer is None:
             return False
         
-        # Compare
         try:
             return abs(float(response_answer) - float(gt_answer)) < 1e-6
         except ValueError:
@@ -171,7 +179,6 @@ class ModelEvaluator:
     
     def count_reasoning_steps(self, response: str) -> int:
         """Count reasoning steps in response."""
-        # Count by newlines, "Step", numbered lists, etc.
         step_patterns = [
             r'step\s*\d+',
             r'^\d+\.',
@@ -181,7 +188,7 @@ class ModelEvaluator:
         for pattern in step_patterns:
             count += len(re.findall(pattern, response, re.IGNORECASE | re.MULTILINE))
         return max(count, response.count('\n') // 2)
-    
+
     def evaluate(
         self,
         problems: List[Dict],
@@ -190,7 +197,6 @@ class ModelEvaluator:
     ) -> ModelMetrics:
         """Evaluate model on problems."""
         max_k = max(k_values)
-        
         all_correctness = []
         all_lengths = []
         all_steps = []
@@ -204,15 +210,12 @@ class ModelEvaluator:
             responses = self.generate(prompt, n_samples=max_k, temperature=temperature)
             total_time += time.time() - start
             
-            # Check correctness
             correctness = [self.check_answer(r, answer) for r in responses]
             all_correctness.append(correctness)
             
-            # Track response quality
             all_lengths.extend([len(r) for r in responses])
             all_steps.extend([self.count_reasoning_steps(r) for r in responses])
         
-        # Compute pass@k
         pass_at_k = {}
         for k in k_values:
             correct = sum(1 for c in all_correctness if any(c[:k]))
@@ -238,7 +241,6 @@ def load_held_out_problems(num_problems: int = 50) -> List[Dict]:
         ds = load_dataset("gsm8k", "main", split=f"test[:{num_problems}]")
         problems = []
         for item in ds:
-            # Extract final answer from GSM8K format (#### answer)
             answer = item["answer"].split("####")[-1].strip()
             problems.append({
                 "prompt": item["question"],
@@ -248,25 +250,7 @@ def load_held_out_problems(num_problems: int = 50) -> List[Dict]:
         return problems
     except Exception as e:
         logger.warning(f"Could not load GSM8K: {e}")
-        # Fallback to synthetic word problems
-        import random
-        problems = []
-        templates = [
-            ("A store has {a} items. They sell {b} items and receive {c} new items. How many items do they have now?", lambda a,b,c: a - b + c),
-            ("John has {a} dollars. He spends {b} dollars and earns {c} dollars. How much does he have?", lambda a,b,c: a - b + c),
-            ("A train travels {a} miles in the first hour, {b} miles in the second hour. How far did it travel in total?", lambda a,b,c: a + b),
-            ("There are {a} students. {b} leave and {c} new students join. How many students are there now?", lambda a,b,c: a - b + c),
-        ]
-        for i in range(num_problems):
-            template, func = random.choice(templates)
-            a, b, c = random.randint(20, 100), random.randint(5, 30), random.randint(10, 50)
-            b = min(b, a - 1)  # Ensure no negative results
-            problems.append({
-                "prompt": template.format(a=a, b=b, c=c),
-                "answer": str(func(a, b, c)),
-            })
-        logger.info(f"Generated {len(problems)} synthetic word problems")
-        return problems
+        return []
 
 
 def compare_models(
@@ -276,11 +260,9 @@ def compare_models(
     output_path: str = "./comparison_results.json",
 ) -> ComparisonResults:
     """Compare base and fine-tuned models."""
-    
-    # Load problems
     problems = load_held_out_problems(num_problems)
     
-    # Evaluate base model
+    # Base
     logger.info("=" * 60)
     logger.info("Evaluating BASE model")
     logger.info("=" * 60)
@@ -288,11 +270,10 @@ def compare_models(
     base_evaluator.load()
     base_metrics = base_evaluator.evaluate(problems)
     
-    # Free memory
     del base_evaluator.model
     torch.cuda.empty_cache()
     
-    # Evaluate fine-tuned model
+    # Fine-tuned
     logger.info("=" * 60)
     logger.info("Evaluating FINE-TUNED model")
     logger.info("=" * 60)
@@ -300,7 +281,6 @@ def compare_models(
     ft_evaluator.load()
     ft_metrics = ft_evaluator.evaluate(problems)
     
-    # Compute improvements
     from datetime import datetime
     results = ComparisonResults(
         base=base_metrics,
@@ -312,7 +292,6 @@ def compare_models(
         timestamp=datetime.now().isoformat(),
     )
     
-    # Save results
     with open(output_path, "w") as f:
         json.dump({
             "base": asdict(base_metrics),
@@ -339,138 +318,32 @@ def print_comparison_report(results: ComparisonResults):
     print("-" * 70)
     
     b, f = results.base, results.finetuned
-    
-    def fmt_delta(delta):
-        if delta > 0:
-            return f"+{delta:.1f}%"
-        return f"{delta:.1f}%"
+    fmt_delta = lambda d: f"+{d:.1f}%" if d > 0 else f"{d:.1f}%"
     
     print(f"{'Pass@1':<30} {b.pass_at_1*100:>12.1f}% {f.pass_at_1*100:>12.1f}% {fmt_delta(results.improvement_pass_at_1):>10}")
     print(f"{'Pass@4':<30} {b.pass_at_4*100:>12.1f}% {f.pass_at_4*100:>12.1f}% {fmt_delta(results.improvement_pass_at_4):>10}")
     print(f"{'Pass@8':<30} {b.pass_at_8*100:>12.1f}% {f.pass_at_8*100:>12.1f}% {fmt_delta(results.improvement_pass_at_8):>10}")
     print(f"{'Avg Response Length':<30} {b.avg_response_length:>12.0f} {f.avg_response_length:>12.0f}")
     print(f"{'Avg Reasoning Steps':<30} {b.avg_reasoning_steps:>12.1f} {f.avg_reasoning_steps:>12.1f}")
-    print(f"{'Inference Time (s/problem)':<30} {b.inference_time_per_problem:>12.2f} {f.inference_time_per_problem:>12.2f}")
+    print(f"{'Inference Time (s/prob)':<30} {b.inference_time_per_problem:>12.2f} {f.inference_time_per_problem:>12.2f}")
     
-    print("\n" + "-" * 70)
-    print(f"Evaluated on {results.held_out_problems} held-out problems")
-    print("-" * 70)
-    
-    # Summary
     print("\n📊 SUMMARY:")
-    if results.improvement_pass_at_1 > 0:
-        print(f"   ✅ Pass@1 improved by {results.improvement_pass_at_1:.1f} percentage points")
-    else:
-        print(f"   ⚠️  Pass@1 changed by {results.improvement_pass_at_1:.1f} percentage points")
-    
-    if results.improvement_pass_at_8 > 0:
-        print(f"   ✅ Pass@8 improved by {results.improvement_pass_at_8:.1f} percentage points")
-    
-    print("\n" + "=" * 70 + "\n")
-
-
-def generate_readme_metrics(results: ComparisonResults) -> str:
-    """Generate markdown metrics section for README."""
-    b, f = results.base, results.finetuned
-    
-    markdown = f"""
-## 📊 Evaluation Results
-
-### Model Comparison: Base vs GRPO Fine-tuned
-
-| Metric | Base Model | Fine-tuned | Improvement |
-|--------|-----------|------------|-------------|
-| Pass@1 | {b.pass_at_1*100:.1f}% | {f.pass_at_1*100:.1f}% | {'+' if results.improvement_pass_at_1 > 0 else ''}{results.improvement_pass_at_1:.1f}% |
-| Pass@4 | {b.pass_at_4*100:.1f}% | {f.pass_at_4*100:.1f}% | {'+' if results.improvement_pass_at_4 > 0 else ''}{results.improvement_pass_at_4:.1f}% |
-| Pass@8 | {b.pass_at_8*100:.1f}% | {f.pass_at_8*100:.1f}% | {'+' if results.improvement_pass_at_8 > 0 else ''}{results.improvement_pass_at_8:.1f}% |
-| Avg Response Length | {b.avg_response_length:.0f} chars | {f.avg_response_length:.0f} chars | - |
-| Avg Reasoning Steps | {b.avg_reasoning_steps:.1f} | {f.avg_reasoning_steps:.1f} | - |
-
-**Evaluation Details:**
-- Held-out problems: {results.held_out_problems}
-- Base model: `{b.model_name}`
-- Fine-tuned model: GRPO with 3 epochs, lr=5e-5
-- Timestamp: {results.timestamp[:10]}
-
-### Training Configuration
-
-```yaml
-method: GRPO (Group Relative Policy Optimization)
-base_model: Qwen/Qwen2.5-7B-Instruct
-epochs: 3
-learning_rate: 5e-5
-lora_r: 8
-lora_alpha: 16
-kl_coef: 0.1
-clip_range: 0.2
-training_samples: 2000
-dpo_pairs: 3125
-```
-
-### Key Insights
-
-1. **GRPO Training**: Successfully trained without a reward model by using group-relative advantages
-2. **Loss Trajectory**: Loss decreased from -0.0017 → -0.0352 (more negative = better preference learning)
-3. **Test-Time Scaling**: Pass@k shows {(f.pass_at_8 - f.pass_at_1)*100:.1f}% improvement from k=1 to k=8
-"""
-    return markdown
+    print(f"   Pass@1 improvement: {fmt_delta(results.improvement_pass_at_1)}")
+    print(f"   Pass@8 improvement: {fmt_delta(results.improvement_pass_at_8)}")
+    print("=" * 70 + "\n")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Compare base vs fine-tuned model")
-    parser.add_argument(
-        "--base-model",
-        type=str,
-        default="Qwen/Qwen2.5-7B-Instruct",
-        help="Base model path",
-    )
-    parser.add_argument(
-        "--finetuned-model",
-        type=str,
-        default="./grpo_output_v2",
-        help="Fine-tuned model path",
-    )
-    parser.add_argument(
-        "--num-problems",
-        type=int,
-        default=50,
-        help="Number of held-out problems",
-    )
-    parser.add_argument(
-        "--output",
-        type=str,
-        default="./comparison_results.json",
-        help="Output JSON path",
-    )
-    parser.add_argument(
-        "--readme-output",
-        type=str,
-        default="./METRICS.md",
-        help="Output markdown path for README section",
-    )
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--base-model", type=str, default="Qwen/Qwen2.5-1.5B-Instruct")
+    parser.add_argument("--finetuned-model", type=str, default="./outputs/grpo_model")
+    parser.add_argument("--num-problems", type=int, default=50)
+    parser.add_argument("--output", type=str, default="./comparison_results.json")
+    parser.add_argument("--readme-output", type=str, default="./METRICS.md")
     
     args = parser.parse_args()
-    
-    # Run comparison
-    results = compare_models(
-        args.base_model,
-        args.finetuned_model,
-        args.num_problems,
-        args.output,
-    )
-    
-    # Print report
+    results = compare_models(args.base_model, args.finetuned_model, args.num_problems, args.output)
     print_comparison_report(results)
-    
-    # Generate README metrics
-    readme_section = generate_readme_metrics(results)
-    with open(args.readme_output, "w") as f:
-        f.write(readme_section)
-    
-    logger.info(f"Results saved to: {args.output}")
-    logger.info(f"README metrics saved to: {args.readme_output}")
-    print(f"\n📁 To add to README, copy contents of {args.readme_output}")
-
 
 if __name__ == "__main__":
     main()

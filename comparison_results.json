@@ -1,31 +1,31 @@
 {
   "base": {
-    "model_name": "Qwen/Qwen2.5-7B-Instruct",
-    "pass_at_1": 0.96,
-    "pass_at_4": 1.0,
-    "pass_at_8": 1.0,
-    "avg_response_length": 96.865,
-    "avg_reasoning_steps": 1.6525,
-    "inference_time_per_problem": 5.096051487922669,
-    "total_problems": 50,
-    "correct_at_1": 48
+    "model_name": "Qwen/Qwen2.5-1.5B-Instruct",
+    "pass_at_1": 0.35,
+    "pass_at_4": 0.65,
+    "pass_at_8": 0.8,
+    "avg_response_length": 1150.8375,
+    "avg_reasoning_steps": 14.79375,
+    "inference_time_per_problem": 7.647909772396088,
+    "total_problems": 20,
+    "correct_at_1": 7
   },
   "finetuned": {
-    "model_name": "./grpo_output_v2",
-    "pass_at_1": 1.0,
-    "pass_at_4": 1.0,
-    "pass_at_8": 1.0,
-    "avg_response_length": 272.3425,
-    "avg_reasoning_steps": 4.8075,
-    "inference_time_per_problem": 12.481951379776001,
-    "total_problems": 50,
-    "correct_at_1": 50
+    "model_name": "./outputs/grpo_model",
+    "pass_at_1": 0.55,
+    "pass_at_4": 0.75,
+    "pass_at_8": 0.9,
+    "avg_response_length": 1307.06875,
+    "avg_reasoning_steps": 17.03125,
+    "inference_time_per_problem": 8.70495742559433,
+    "total_problems": 20,
+    "correct_at_1": 11
   },
   "improvements": {
-    "pass_at_1": 4.0000000000000036,
-    "pass_at_4": 0.0,
-    "pass_at_8": 0.0
+    "pass_at_1": 20.000000000000007,
+    "pass_at_4": 9.999999999999998,
+    "pass_at_8": 9.999999999999998
   },
-  "held_out_problems": 50,
-  "timestamp": "2026-01-10T02:31:55.606903"
+  "held_out_problems": 20,
+  "timestamp": "2026-01-11T01:39:13.216088"
 }
