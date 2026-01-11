@@ -54,3 +54,23 @@ Results achieved after **GRPO post-training** on a **Qwen2.5-1.5B-Instruct** bas
 │                       └──────────────┘                          │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
+
+
+
+## 🚀 Quick Start
+
+### Installation
+
+```bash
+git clone https://github.com/pmukeshreddy/distributed-reasoning-loop.git
+cd distributed-reasoning-loop
+pip install -e .
+
+### Reproduce Evaluation
+```bash
+
+python scripts/eval_finetuned.py \
+  --base-model Qwen/Qwen2.5-1.5B-Instruct \
+  --finetuned-model ./outputs/grpo_model \
+  --num-problems 50
+
