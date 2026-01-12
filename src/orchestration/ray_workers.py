@@ -109,15 +109,15 @@ class DataProcessingWorker:
         """Initialize the appropriate verifier."""
         if self.problem_type == "math":
             try:
-                from verifier import GSM8KVerifier
+                from src.verifier import GSM8KVerifier
             except ImportError:
-                from ..verifier import GSM8KVerifier
+                from src.verifier import GSM8KVerifier
             self.verifier = GSM8KVerifier()
         else:
             try:
-                from verifier import HumanEvalVerifier
+                from src.verifier import HumanEvalVerifier
             except ImportError:
-                from ..verifier import HumanEvalVerifier
+                from src.verifier import HumanEvalVerifier
             self.verifier = HumanEvalVerifier()
     
     def process_batch(
@@ -139,9 +139,9 @@ class DataProcessingWorker:
             try:
                 if self.problem_type == "math":
                     try:
-                        from verifier import VerificationStatus
+                        from src.verifier import VerificationStatus
                     except ImportError:
-                        from ..verifier import VerificationStatus
+                        from src.verifier import VerificationStatus
                     result = self.verifier.verify_reasoning_path(
                         item["reasoning"],
                         item["expected_answer"],
@@ -153,9 +153,9 @@ class DataProcessingWorker:
                     item["final_answer"] = result.predicted
                 else:
                     try:
-                        from verifier import ExecutionStatus
+                        from src.verifier import ExecutionStatus
                     except ImportError:
-                        from ..verifier import ExecutionStatus
+                        from src.verifier import ExecutionStatus
                     code = self.verifier.extract_code(item["reasoning"])
                     result = self.verifier.verify_humaneval(
                         code,
@@ -404,7 +404,7 @@ class DistributedDataProcessor:
         
         # Split data among workers
         num_workers = len(self.workers)
-        chunk_size = (len(data) + num_workers - 1) // num_workers
+        chunk_size = max(1, (len(data) + num_workers - 1) // num_workers)
         chunks = [
             data[i:i + chunk_size]
             for i in range(0, len(data), chunk_size)

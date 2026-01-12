@@ -132,24 +132,55 @@ class PassAtKEvaluator:
         start_time = time.time()
         
         if self.generator is not None:
-            # Use SGLang batch generation
-            try:
-                responses = self.generator.generate_batch(
-                    [prompt] * n,
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                )
-                total_tokens = sum(len(r.split()) * 1.3 for r in responses)  # Approx
-            except Exception as e:
-                logger.warning(f"Generation error: {e}")
-                responses = [f"Mock response {i}" for i in range(n)]
-                total_tokens = n * 100
+            # Use SGLang via HTTP
+            import requests
+            responses = []
+            total_tokens = 0
+            for _ in range(n):
+                try:
+                    resp = requests.post(
+                        f"{self.model_name}/v1/chat/completions",
+                        json={
+                            "model": "default",
+                            "messages": [{"role": "user", "content": prompt}],
+                            "temperature": self.temperature,
+                            "max_tokens": self.max_tokens,
+                        },
+                        timeout=120
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        text = data["choices"][0]["message"]["content"]
+                        responses.append(text)
+                        total_tokens += data.get("usage", {}).get("completion_tokens", len(text.split()))
+                    else:
+                        responses.append("")
+                except Exception as e:
+                    logger.warning(f"Request error: {e}")
+                    responses.append("")
+        elif self.model is not None and self.tokenizer is not None:
+            # Use local HuggingFace model
+            import torch
+            responses = []
+            total_tokens = 0
+            for _ in range(n):
+                inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+                with torch.no_grad():
+                    outputs = self.model.generate(
+                        **inputs,
+                        max_new_tokens=self.max_tokens,
+                        temperature=self.temperature,
+                        do_sample=True,
+                        pad_token_id=self.tokenizer.eos_token_id,
+                    )
+                response = self.tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
+                responses.append(response)
+                total_tokens += len(outputs[0]) - inputs.input_ids.shape[1]
         else:
             # Mock mode
             import random
             responses = []
             for i in range(n):
-                # Simulate varied responses with ~30% correct
                 if random.random() < 0.3:
                     responses.append("Let me solve this step by step.\n#### 42")
                 else:
@@ -373,11 +404,12 @@ class PassAtKEvaluator:
 def load_dataset(dataset_name: str, num_samples: int) -> List[Dict]:
     """Load evaluation dataset."""
     try:
-        from data_generator.dataset_loader import DatasetLoader
-        loader = DatasetLoader()
+        from datasets import load_dataset as hf_load
         
         if dataset_name == "gsm8k":
-            data = loader.load_gsm8k(split="test", num_samples=num_samples)
+            ds = hf_load("openai/gsm8k", "main", split="test")
+            data = [{"prompt": item["question"], "answer": item["answer"].split("####")[-1].strip()} for item in list(ds)[:num_samples]]
+            return data
         elif dataset_name == "math":
             data = loader.load_math(split="test", num_samples=num_samples)
         else:

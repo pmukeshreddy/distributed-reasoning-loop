@@ -2,33 +2,33 @@
   "pass_at_k": {
     "1": {
       "k": 1,
-      "accuracy": 1.0,
-      "num_problems": 100,
-      "num_correct": 1,
-      "avg_generations_per_problem": 10,
-      "total_tokens_generated": 100000,
-      "total_time_seconds": 0.0,
-      "tokens_per_second": 145585005.21
+      "accuracy": 35.0,
+      "num_problems": 20,
+      "num_correct": 7,
+      "avg_generations_per_problem": 8,
+      "total_tokens_generated": 53964,
+      "total_time_seconds": 134.55,
+      "tokens_per_second": 401.06
     },
-    "5": {
-      "k": 5,
-      "accuracy": 1.0,
-      "num_problems": 100,
-      "num_correct": 1,
-      "avg_generations_per_problem": 10,
-      "total_tokens_generated": 100000,
-      "total_time_seconds": 0.0,
-      "tokens_per_second": 145585005.21
+    "4": {
+      "k": 4,
+      "accuracy": 65.0,
+      "num_problems": 20,
+      "num_correct": 13,
+      "avg_generations_per_problem": 8,
+      "total_tokens_generated": 53964,
+      "total_time_seconds": 134.55,
+      "tokens_per_second": 401.06
     },
-    "10": {
-      "k": 10,
-      "accuracy": 2.0,
-      "num_problems": 100,
-      "num_correct": 2,
-      "avg_generations_per_problem": 10,
-      "total_tokens_generated": 100000,
-      "total_time_seconds": 0.0,
-      "tokens_per_second": 145585005.21
+    "8": {
+      "k": 8,
+      "accuracy": 70.0,
+      "num_problems": 20,
+      "num_correct": 14,
+      "avg_generations_per_problem": 8,
+      "total_tokens_generated": 53964,
+      "total_time_seconds": 134.55,
+      "tokens_per_second": 401.06
     }
   }
 }

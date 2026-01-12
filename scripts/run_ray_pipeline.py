@@ -45,7 +45,7 @@ processor.shutdown()
 
 logger.info("Phase 3: GRPO Training")
 data = [json.loads(l) for l in open("./outputs/synthetic_data/dpo_pairs.jsonl")]
-trainer = ReasoningGRPOTrainer(GRPOConfig(model_name="Qwen/Qwen2.5-1.5B-Instruct", output_dir="./outputs/grpo_model", num_epochs=1, batch_size=2))
+trainer = ReasoningGRPOTrainer(GRPOConfig(model_name="Qwen/Qwen2.5-1.5B-Instruct", output_dir="./outputs/grpo_model", num_epochs=5, batch_size=2))
 trainer.train(data)
 
 ray.shutdown()
