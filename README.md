@@ -4,7 +4,7 @@ End-to-end GRPO (Group Relative Policy Optimization) pipeline for training reaso
 
 ## 🎯 Results
 
-Evaluated on GSM8K test problems:
+Evaluated on GSM8K test set:
 
 | Metric | Base Model | GRPO Trained | Improvement |
 |--------|------------|--------------|-------------|
@@ -20,7 +20,7 @@ Evaluated on GSM8K test problems:
 | **SGLang** | Throughput | **24K tokens/sec** |
 | **Ray** | Workers | **4 parallel**, balanced distribution |
 | **GRPO** | Trainable params | **0.07%** (LoRA) |
-| **Pipeline** | End-to-end | **~12 min** on 1x H100 |
+| **Pipeline** | End-to-end | **~12 min** on 2x H100 |
 
 ## 🏗️ Architecture
 
@@ -118,8 +118,7 @@ sleep 45
 python scripts/eval_pass_at_k.py \
     --model http://localhost:30000 \
     --dataset gsm8k \
-    --k 1 4 8 \
-    --num-problems 200
+    --k 1 4 8
 ```
 
 Expected output:
@@ -129,9 +128,9 @@ PASS@K RESULTS
 ============================================================
 k        Accuracy     Correct      Tokens/s    
 ------------------------------------------------------------
-1          42.5%     85/200         21960
-4          74.5%     149/200        21960
-8          82.0%     164/200        21960
+1          42.5%       -           21960
+4          74.5%       -           21960
+8          82.0%       -           21960
 ```
 
 ### Step 5: Evaluate Trained Model
@@ -149,8 +148,7 @@ sleep 45
 python scripts/eval_pass_at_k.py \
     --model http://localhost:30000 \
     --dataset gsm8k \
-    --k 1 4 8 \
-    --num-problems 200
+    --k 1 4 8
 ```
 
 Expected output:
@@ -160,9 +158,9 @@ PASS@K RESULTS
 ============================================================
 k        Accuracy     Correct      Tokens/s    
 ------------------------------------------------------------
-1          69.0%     138/200        22432
-4          88.0%     176/200        22432
-8          92.5%     185/200        22432
+1          69.0%       -           22432
+4          88.0%       -           22432
+8          92.5%       -           22432
 ```
 
 ## 📁 Project Structure
@@ -229,12 +227,12 @@ DPO pairs created: 2,125
 Training groups:   425
 Training epochs:   5
 Loss progression:  -0.0066 → -0.0106 → -0.0125 → -0.0149 → -0.0220
-Total time:        ~12 minutes on 1x H100
+Total time:        ~12 minutes on 2x H100
 ```
 
 ## 🖥️ Hardware Requirements
 
-- **GPU**: 1x H100 (80GB) or equivalent
+- **GPU**: 2x H100 (80GB) or equivalent
 - **RAM**: 256GB+ recommended
 - **Storage**: 50GB for models and data
 
@@ -245,3 +243,7 @@ Total time:        ~12 minutes on 1x H100
 - [Ray](https://ray.io/) - Distributed computing
 - [GSM8K](https://arxiv.org/abs/2110.14168) - Math reasoning benchmark
 - [Prime Intellect](https://www.primeintellect.ai/) - Distributed RL infrastructure
+
+## 📄 License
+
+MIT
