@@ -4,7 +4,7 @@ End-to-end GRPO (Group Relative Policy Optimization) pipeline for training reaso
 
 ## 🎯 Results
 
-Evaluated on GSM8K test problems**:
+Evaluated on GSM8K test problems:
 
 | Metric | Base Model | GRPO Trained | Improvement |
 |--------|------------|--------------|-------------|
