@@ -126,11 +126,11 @@ Expected output:
 ============================================================
 PASS@K RESULTS
 ============================================================
-k        Accuracy     Correct      Tokens/s    
+k        Accuracy     Tokens/s    
 ------------------------------------------------------------
-1          42.5%       -           21960
-4          74.5%       -           21960
-8          82.0%       -           21960
+1          42.5%       21960
+4          74.5%       21960
+8          82.0%       21960
 ```
 
 ### Step 5: Evaluate Trained Model
@@ -156,11 +156,11 @@ Expected output:
 ============================================================
 PASS@K RESULTS
 ============================================================
-k        Accuracy     Correct      Tokens/s    
+k        Accuracy     Tokens/s    
 ------------------------------------------------------------
-1          69.0%       -           22432
-4          88.0%       -           22432
-8          92.5%       -           22432
+1          69.0%       22432
+4          88.0%       22432
+8          92.5%       22432
 ```
 
 ## 📁 Project Structure
@@ -223,9 +223,12 @@ distributed-reasoning-loop/
 
 ## 📚 References
 
-- [DeepSeek-R1](https://arxiv.org/abs/2401.02954) - GRPO algorithm
+- [DeepSeek-R1](https://arxiv.org/abs/2501.12948) - GRPO algorithm
 - [SGLang](https://github.com/sgl-project/sglang) - RadixAttention inference
 - [Ray](https://ray.io/) - Distributed computing
 - [GSM8K](https://arxiv.org/abs/2110.14168) - Math reasoning benchmark
 - [Prime Intellect](https://www.primeintellect.ai/) - Distributed RL infrastructure
 
+## 📄 License
+
+MIT
