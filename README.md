@@ -229,6 +229,3 @@ distributed-reasoning-loop/
 - [GSM8K](https://arxiv.org/abs/2110.14168) - Math reasoning benchmark
 - [Prime Intellect](https://www.primeintellect.ai/) - Distributed RL infrastructure
 
-## 📄 License
-
-MIT
