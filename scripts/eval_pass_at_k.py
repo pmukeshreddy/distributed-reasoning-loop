@@ -21,6 +21,7 @@ from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass, field
 import numpy as np
 from collections import Counter
+import concurrent.futures
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -142,52 +143,61 @@ class PassAtKEvaluator:
         prompt: str,
         n: int,
     ) -> Tuple[List[str], int, float]:
-        """Generate n samples for a single prompt."""
+        """Generate n samples for a single prompt using BATCHED request."""
         start_time = time.time()
         
         if self.model_name.startswith("http"):
             import requests
             responses = []
             total_tokens = 0
-            for _ in range(n):
-                try:
-                    resp = requests.post(
-                        f"{self.model_name}/v1/chat/completions",
-                        json={
-                            "model": "default",
-                            "messages": [{"role": "user", "content": prompt}],
-                            "temperature": self.temperature,
-                            "max_tokens": self.max_tokens,
-                        },
-                        timeout=120
-                    )
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        text = data["choices"][0]["message"]["content"]
+            try:
+                # BATCHED: Use n parameter to generate all samples in ONE request
+                resp = requests.post(
+                    f"{self.model_name}/v1/chat/completions",
+                    json={
+                        "model": "default",
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": self.temperature,
+                        "max_tokens": self.max_tokens,
+                        "n": n,  # Generate all n samples in single request
+                    },
+                    timeout=300  # Longer timeout for batch
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for choice in data["choices"]:
+                        text = choice["message"]["content"]
                         responses.append(text)
-                        total_tokens += data.get("usage", {}).get("completion_tokens", len(text.split()))
-                    else:
-                        responses.append("")
-                except Exception as e:
-                    logger.warning(f"Request error: {e}")
-                    responses.append("")
+                    total_tokens = data.get("usage", {}).get("completion_tokens", 0)
+                else:
+                    logger.warning(f"API error {resp.status_code}: {resp.text[:200]}")
+                    responses = [""] * n
+            except Exception as e:
+                logger.warning(f"Request error: {e}")
+                responses = [""] * n
+                
         elif self.model is not None and self.tokenizer is not None:
             import torch
             responses = []
             total_tokens = 0
-            for _ in range(n):
-                inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
-                with torch.no_grad():
-                    outputs = self.model.generate(
-                        **inputs,
-                        max_new_tokens=self.max_tokens,
-                        temperature=self.temperature,
-                        do_sample=True,
-                        pad_token_id=self.tokenizer.eos_token_id,
-                    )
-                response = self.tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
+            # Batch generation with num_return_sequences
+            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+            with torch.no_grad():
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=self.max_tokens,
+                    temperature=self.temperature,
+                    do_sample=True,
+                    num_return_sequences=n,
+                    pad_token_id=self.tokenizer.eos_token_id,
+                )
+            for i in range(n):
+                response = self.tokenizer.decode(
+                    outputs[i][inputs.input_ids.shape[1]:], 
+                    skip_special_tokens=True
+                )
                 responses.append(response)
-                total_tokens += len(outputs[0]) - inputs.input_ids.shape[1]
+                total_tokens += len(outputs[i]) - inputs.input_ids.shape[1]
         else:
             import random
             responses = []
@@ -200,6 +210,65 @@ class PassAtKEvaluator:
         
         time_taken = time.time() - start_time
         return responses, int(total_tokens), time_taken
+
+    def generate_batch_prompts(
+        self,
+        prompts: List[str],
+        n_per_prompt: int,
+    ) -> Tuple[List[List[str]], int, float]:
+        """Generate n samples for MULTIPLE prompts in parallel batches."""
+        start_time = time.time()
+        
+        if not self.model_name.startswith("http"):
+            # Fallback to sequential for non-HTTP
+            all_responses = []
+            total_tokens = 0
+            for prompt in prompts:
+                responses, tokens, _ = self.generate_n_samples(prompt, n_per_prompt)
+                all_responses.append(responses)
+                total_tokens += tokens
+            return all_responses, total_tokens, time.time() - start_time
+        
+        import requests
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        
+        all_responses = [None] * len(prompts)
+        total_tokens = 0
+        
+        def make_request(idx: int, prompt: str):
+            try:
+                resp = requests.post(
+                    f"{self.model_name}/v1/chat/completions",
+                    json={
+                        "model": "default",
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": self.temperature,
+                        "max_tokens": self.max_tokens,
+                        "n": n_per_prompt,
+                    },
+                    timeout=300
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    texts = [c["message"]["content"] for c in data["choices"]]
+                    tokens = data.get("usage", {}).get("completion_tokens", 0)
+                    return idx, texts, tokens
+                else:
+                    return idx, [""] * n_per_prompt, 0
+            except Exception as e:
+                logger.warning(f"Request error for prompt {idx}: {e}")
+                return idx, [""] * n_per_prompt, 0
+        
+        # Parallel execution with thread pool
+        with ThreadPoolExecutor(max_workers=16) as executor:
+            futures = [executor.submit(make_request, i, p) for i, p in enumerate(prompts)]
+            for future in as_completed(futures):
+                idx, texts, tokens = future.result()
+                all_responses[idx] = texts
+                total_tokens += tokens
+        
+        time_taken = time.time() - start_time
+        return all_responses, total_tokens, time_taken
     
     def extract_answer(self, response: str) -> Optional[str]:
         """Extract numerical answer from response."""
@@ -235,28 +304,25 @@ class PassAtKEvaluator:
         k_values: List[int],
         max_n: Optional[int] = None,
     ) -> Dict[int, PassAtKResults]:
-        """Evaluate Pass@k for multiple values of k."""
+        """Evaluate Pass@k for multiple values of k with BATCHED generation."""
         if max_n is None:
             max_n = max(k_values)
         
         logger.info(f"Evaluating Pass@k for k={k_values}")
         logger.info(f"Generating {max_n} samples per problem for {len(problems)} problems")
         
-        all_results = []
-        total_tokens = 0
-        total_time = 0
+        # Batch all prompts together
+        prompts = [prob.get("prompt", prob.get("problem", "")) for prob in problems]
+        answers = [prob.get("answer", "") for prob in problems]
         
-        from tqdm import tqdm
-        for prob in tqdm(problems, desc="Pass@k"):
-            prompt = prob.get("prompt", prob.get("problem", ""))
-            answer = prob.get("answer", "")
-            
-            responses, tokens, gen_time = self.generate_n_samples(prompt, max_n)
-            total_tokens += tokens
-            total_time += gen_time
-            
+        start_time = time.time()
+        all_responses_batch, total_tokens, _ = self.generate_batch_prompts(prompts, max_n)
+        total_time = time.time() - start_time
+        
+        # Process results
+        all_results = []
+        for i, (prompt, answer, responses) in enumerate(zip(prompts, answers, all_responses_batch)):
             correctness = [self.check_correctness(r, answer) for r in responses]
-            
             all_results.append({
                 "prompt": prompt,
                 "answer": answer,
@@ -291,20 +357,18 @@ class PassAtKEvaluator:
         problems: List[Dict],
         n_samples: int = 8,
     ) -> Tuple[float, Dict]:
-        """Evaluate using majority voting."""
+        """Evaluate using majority voting with BATCHED generation."""
         logger.info(f"Evaluating Majority Voting with n={n_samples}")
         
-        correct = 0
-        total_time = 0
+        prompts = [prob.get("prompt", prob.get("problem", "")) for prob in problems]
+        answers = [prob.get("answer", "") for prob in problems]
         
-        from tqdm import tqdm
-        for prob in tqdm(problems, desc="Majority Vote"):
-            prompt = prob.get("prompt", prob.get("problem", ""))
-            answer = prob.get("answer", "")
-            
-            responses, _, gen_time = self.generate_n_samples(prompt, n_samples)
-            total_time += gen_time
-            
+        start_time = time.time()
+        all_responses_batch, _, _ = self.generate_batch_prompts(prompts, n_samples)
+        total_time = time.time() - start_time
+        
+        correct = 0
+        for answer, responses in zip(answers, all_responses_batch):
             extracted = [self.extract_answer(r) for r in responses]
             extracted = [e for e in extracted if e is not None]
             
@@ -331,30 +395,25 @@ class PassAtKEvaluator:
     ) -> TTCResults:
         """
         Self-Consistency: Sample many paths, majority vote on final answer.
-        More robust than single-sample majority voting.
+        BATCHED across all problems for maximum throughput.
         """
         logger.info(f"Evaluating Self-Consistency with n={n_samples}")
         
-        correct = 0
-        total_time = 0
+        prompts = [prob.get("prompt", prob.get("problem", "")) for prob in problems]
+        answers = [prob.get("answer", "") for prob in problems]
         
-        from tqdm import tqdm
-        for prob in tqdm(problems, desc="Self-Consistency"):
-            prompt = prob.get("prompt", prob.get("problem", ""))
-            answer = prob.get("answer", "")
-            
-            responses, _, gen_time = self.generate_n_samples(prompt, n_samples)
-            total_time += gen_time
-            
-            # Extract all answers
+        start_time = time.time()
+        all_responses_batch, _, _ = self.generate_batch_prompts(prompts, n_samples)
+        total_time = time.time() - start_time
+        
+        correct = 0
+        for answer, responses in zip(answers, all_responses_batch):
             extracted = [self.extract_answer(r) for r in responses]
             extracted = [e for e in extracted if e is not None]
             
             if extracted:
-                # Majority vote with confidence
                 counts = Counter(extracted)
                 majority_answer, count = counts.most_common(1)[0]
-                confidence = count / len(extracted)
                 
                 gt_nums = re.findall(r'-?\d+\.?\d*', answer.replace(",", ""))
                 if gt_nums and majority_answer == gt_nums[-1]:
@@ -379,64 +438,85 @@ class PassAtKEvaluator:
     ) -> TTCResults:
         """
         Beam Search: Keep top-k partial solutions at each step.
-        Prunes bad reasoning paths early.
+        BATCHED: Process all problems' beams in parallel at each step.
         """
         logger.info(f"Evaluating Beam Search with width={beam_width}, steps={max_steps}")
         
-        correct = 0
-        total_time = 0
-        total_samples = 0
+        start_time = time.time()
         
-        from tqdm import tqdm
-        for prob in tqdm(problems, desc="Beam Search"):
+        # Initialize beams for all problems
+        problem_beams = []
+        for prob in problems:
             prompt = prob.get("prompt", prob.get("problem", ""))
             answer = prob.get("answer", "")
+            problem_beams.append({
+                "prompt": prompt,
+                "answer": answer,
+                "beam": [(0.0, "")],  # (score, partial_response)
+                "done": False,
+                "best_response": "",
+            })
+        
+        total_samples = 0
+        
+        for step in range(max_steps):
+            # Collect all prompts that need generation this step
+            batch_prompts = []
+            batch_indices = []  # (problem_idx, beam_idx)
             
-            start_time = time.time()
+            for prob_idx, pb in enumerate(problem_beams):
+                if pb["done"]:
+                    continue
+                for beam_idx, (score, partial) in enumerate(pb["beam"]):
+                    full_prompt = f"{pb['prompt']}\n{partial}" if partial else pb["prompt"]
+                    batch_prompts.append(full_prompt)
+                    batch_indices.append((prob_idx, beam_idx, score, partial))
             
-            # Initialize beam with empty continuations
-            beam = [(0.0, "")]  # (score, partial_response)
-            samples_used = 0
+            if not batch_prompts:
+                break
             
-            for step in range(max_steps):
-                candidates = []
-                
-                for score, partial in beam:
-                    # Generate continuations from current partial
-                    full_prompt = f"{prompt}\n{partial}" if partial else prompt
-                    responses, _, _ = self.generate_n_samples(full_prompt, beam_width)
-                    samples_used += beam_width
+            # BATCHED generation for all beams across all problems
+            all_responses, _, _ = self.generate_batch_prompts(batch_prompts, beam_width)
+            total_samples += len(batch_prompts) * beam_width
+            
+            # Process responses and update beams
+            # Group by problem
+            problem_candidates = {i: [] for i in range(len(problem_beams))}
+            
+            for (prob_idx, beam_idx, score, partial), responses in zip(batch_indices, all_responses):
+                for resp in responses:
+                    new_partial = partial + resp if partial else resp
+                    new_score = score
                     
-                    for resp in responses:
-                        # Score based on answer presence and length
-                        new_partial = partial + resp if partial else resp
-                        new_score = score
-                        
-                        # Boost if answer found
-                        if "####" in resp or "answer is" in resp.lower():
-                            new_score += 10.0
-                        
-                        # Small penalty for length (prefer concise)
-                        new_score -= len(resp) * 0.001
-                        
-                        candidates.append((new_score, new_partial))
-                
-                # Keep top beam_width
-                candidates.sort(key=lambda x: -x[0])
-                beam = candidates[:beam_width]
-                
-                # Early stop if best has answer
-                if beam and ("####" in beam[0][1] or "answer is" in beam[0][1].lower()):
-                    break
+                    if "####" in resp or "answer is" in resp.lower():
+                        new_score += 10.0
+                    new_score -= len(resp) * 0.001
+                    
+                    problem_candidates[prob_idx].append((new_score, new_partial))
             
-            total_time += time.time() - start_time
-            total_samples += samples_used
-            
-            # Check best beam
-            if beam:
-                best_response = beam[0][1]
-                if self.check_correctness(best_response, answer):
-                    correct += 1
+            # Update beams for each problem
+            for prob_idx, pb in enumerate(problem_beams):
+                if pb["done"]:
+                    continue
+                    
+                candidates = problem_candidates[prob_idx]
+                if candidates:
+                    candidates.sort(key=lambda x: -x[0])
+                    pb["beam"] = candidates[:beam_width]
+                    
+                    # Check if best has answer
+                    if pb["beam"] and ("####" in pb["beam"][0][1] or "answer is" in pb["beam"][0][1].lower()):
+                        pb["done"] = True
+                        pb["best_response"] = pb["beam"][0][1]
+        
+        total_time = time.time() - start_time
+        
+        # Count correct
+        correct = 0
+        for pb in problem_beams:
+            best_response = pb["best_response"] if pb["best_response"] else (pb["beam"][0][1] if pb["beam"] else "")
+            if self.check_correctness(best_response, pb["answer"]):
+                correct += 1
         
         accuracy = correct / len(problems) if problems else 0
         avg_samples = total_samples / len(problems) if problems else 0
@@ -458,92 +538,107 @@ class PassAtKEvaluator:
     ) -> TTCResults:
         """
         MCTS: Monte Carlo Tree Search for reasoning.
-        Balances exploration vs exploitation via UCB.
+        BATCHED: Collect leaf nodes across problems, expand in parallel.
         """
         logger.info(f"Evaluating MCTS with simulations={num_simulations}")
         
-        correct = 0
-        total_time = 0
-        total_samples = 0
+        start_time = time.time()
         
-        from tqdm import tqdm
-        for prob in tqdm(problems, desc="MCTS"):
+        class Node:
+            def __init__(self, state, parent=None):
+                self.state = state
+                self.parent = parent
+                self.children = []
+                self.visits = 0
+                self.value = 0.0
+            
+            def ucb(self, exploration_c):
+                if self.visits == 0:
+                    return float('inf')
+                exploit = self.value / self.visits
+                explore = exploration_c * np.sqrt(np.log(self.parent.visits + 1) / self.visits)
+                return exploit + explore
+        
+        # Initialize MCTS for all problems
+        problem_mcts = []
+        for prob in problems:
             prompt = prob.get("prompt", prob.get("problem", ""))
             answer = prob.get("answer", "")
-            
-            start_time = time.time()
-            
-            # Simple MCTS node structure
-            class Node:
-                def __init__(self, state, parent=None):
-                    self.state = state
-                    self.parent = parent
-                    self.children = []
-                    self.visits = 0
-                    self.value = 0.0
-                
-                def ucb(self):
-                    if self.visits == 0:
-                        return float('inf')
-                    exploit = self.value / self.visits
-                    explore = exploration * np.sqrt(np.log(self.parent.visits) / self.visits)
-                    return exploit + explore
-            
             root = Node(prompt)
-            samples_used = 0
-            best_response = ""
-            best_score = -float('inf')
+            root.visits = 1  # Initialize root
+            problem_mcts.append({
+                "prompt": prompt,
+                "answer": answer,
+                "root": root,
+                "best_response": "",
+                "best_score": -float('inf'),
+            })
+        
+        total_samples = 0
+        expansion_batch_size = 4  # Children per expansion
+        
+        for sim in range(num_simulations):
+            # Selection: Find leaf node for each problem
+            leaves_to_expand = []
+            leaf_indices = []
             
-            for sim in range(num_simulations):
-                # Selection: traverse to leaf using UCB
-                node = root
+            for prob_idx, pm in enumerate(problem_mcts):
+                node = pm["root"]
+                # Traverse to leaf using UCB
                 while node.children:
-                    node = max(node.children, key=lambda n: n.ucb())
+                    node = max(node.children, key=lambda n: n.ucb(exploration))
                 
-                # Expansion: generate children
-                if node.visits > 0 or node == root:
-                    responses, _, _ = self.generate_n_samples(node.state, 4)
-                    samples_used += 4
-                    
-                    for resp in responses:
-                        child_state = f"{node.state}\n{resp}" if node != root else resp
-                        child = Node(child_state, parent=node)
-                        node.children.append(child)
-                    
-                    if node.children:
-                        node = node.children[0]
+                # Only expand if visited before or is root
+                if node.visits > 0:
+                    leaves_to_expand.append(node.state)
+                    leaf_indices.append((prob_idx, node))
+            
+            if not leaves_to_expand:
+                continue
+            
+            # BATCHED expansion
+            all_responses, _, _ = self.generate_batch_prompts(leaves_to_expand, expansion_batch_size)
+            total_samples += len(leaves_to_expand) * expansion_batch_size
+            
+            # Process expansions and do simulation + backprop
+            for (prob_idx, node), responses in zip(leaf_indices, all_responses):
+                pm = problem_mcts[prob_idx]
                 
-                # Simulation: evaluate leaf
-                response = node.state if node != root else ""
-                if response:
-                    # Score: 1 if correct, 0.5 if has answer format, 0 otherwise
-                    if self.check_correctness(response, answer):
+                # Add children
+                for resp in responses:
+                    child_state = resp if node == pm["root"] else f"{node.state}\n{resp}"
+                    child = Node(child_state, parent=node)
+                    node.children.append(child)
+                
+                # Simulation: evaluate first child
+                if node.children:
+                    eval_node = node.children[0]
+                    response = eval_node.state
+                    
+                    if self.check_correctness(response, pm["answer"]):
                         reward = 1.0
-                        if best_score < 1.0:
-                            best_response = response
-                            best_score = 1.0
+                        if pm["best_score"] < 1.0:
+                            pm["best_response"] = response
+                            pm["best_score"] = 1.0
                     elif "####" in response or "answer is" in response.lower():
                         reward = 0.3
-                        if best_score < 0.3:
-                            best_response = response
-                            best_score = 0.3
+                        if pm["best_score"] < 0.3:
+                            pm["best_response"] = response
+                            pm["best_score"] = 0.3
                     else:
                         reward = 0.0
-                else:
-                    reward = 0.0
-                
-                # Backpropagation
-                while node:
-                    node.visits += 1
-                    node.value += reward
-                    node = node.parent
-            
-            total_time += time.time() - start_time
-            total_samples += samples_used
-            
-            # Final check
-            if best_score >= 1.0:
-                correct += 1
+                    
+                    # Backpropagation
+                    backprop_node = eval_node
+                    while backprop_node:
+                        backprop_node.visits += 1
+                        backprop_node.value += reward
+                        backprop_node = backprop_node.parent
+        
+        total_time = time.time() - start_time
+        
+        # Count correct
+        correct = sum(1 for pm in problem_mcts if pm["best_score"] >= 1.0)
         
         accuracy = correct / len(problems) if problems else 0
         avg_samples = total_samples / len(problems) if problems else 0
@@ -561,49 +656,62 @@ class PassAtKEvaluator:
         self,
         problems: List[Dict],
         max_samples: int = 64,
+        batch_size: int = 8,
     ) -> TTCResults:
         """
         Verifier-Guided: Generate until verifier confirms correct.
-        Early stopping = efficient. This is the key insight.
+        BATCHED: Generate for all unsolved problems in parallel.
         """
         logger.info(f"Evaluating Verifier-Guided with max_samples={max_samples}")
         
-        correct = 0
-        total_time = 0
-        total_samples = 0
+        start_time = time.time()
         
-        from tqdm import tqdm
-        for prob in tqdm(problems, desc="Verifier-Guided"):
+        # Track state for each problem
+        problem_states = []
+        for prob in problems:
             prompt = prob.get("prompt", prob.get("problem", ""))
             answer = prob.get("answer", "")
+            problem_states.append({
+                "prompt": prompt,
+                "answer": answer,
+                "samples_used": 0,
+                "found_correct": False,
+            })
+        
+        total_samples = 0
+        
+        # Iterate until all problems solved or hit max
+        while True:
+            # Find problems that still need samples
+            active_indices = [
+                i for i, ps in enumerate(problem_states)
+                if not ps["found_correct"] and ps["samples_used"] < max_samples
+            ]
             
-            start_time = time.time()
-            samples_used = 0
-            found_correct = False
+            if not active_indices:
+                break
             
-            # Generate in batches until correct or max reached
-            batch_size = 8
-            all_responses = []
+            # Batch generate for all active problems
+            active_prompts = [problem_states[i]["prompt"] for i in active_indices]
+            all_responses, _, _ = self.generate_batch_prompts(active_prompts, batch_size)
+            total_samples += len(active_indices) * batch_size
             
-            while samples_used < max_samples and not found_correct:
-                responses, _, _ = self.generate_n_samples(prompt, batch_size)
-                samples_used += batch_size
-                all_responses.extend(responses)
+            # Check responses
+            for idx, responses in zip(active_indices, all_responses):
+                ps = problem_states[idx]
+                ps["samples_used"] += batch_size
                 
-                # Check each response
                 for resp in responses:
-                    if self.check_correctness(resp, answer):
-                        found_correct = True
+                    if self.check_correctness(resp, ps["answer"]):
+                        ps["found_correct"] = True
                         break
-            
-            total_time += time.time() - start_time
-            total_samples += samples_used
-            
-            if found_correct:
-                correct += 1
+        
+        total_time = time.time() - start_time
+        
+        correct = sum(1 for ps in problem_states if ps["found_correct"])
+        avg_samples = sum(ps["samples_used"] for ps in problem_states) / len(problems) if problems else 0
         
         accuracy = correct / len(problems) if problems else 0
-        avg_samples = total_samples / len(problems) if problems else 0
         
         return TTCResults(
             method="Verifier-Guided",
