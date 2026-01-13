@@ -426,7 +426,7 @@ class DistributedDataProcessor:
         
         # Tokenize
         if tokenize:
-            chunk_size = (len(results) + num_workers - 1) // num_workers
+            chunk_size = max(1, (len(results) + num_workers - 1) // num_workers)
             chunks = [
                 results[i:i + chunk_size]
                 for i in range(0, len(results), chunk_size)
