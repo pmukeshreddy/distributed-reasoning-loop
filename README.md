@@ -213,22 +213,7 @@ distributed-reasoning-loop/
 - **Verification-based**: Correct = positive, incorrect = negative
 - **Efficient**: LoRA with 0.07% trainable parameters (1,089,536 params)
 
-## 📊 Pipeline Stats
 
-From actual run:
-
-```
-Dataset:           GSM8K (500 problems)
-Paths generated:   5,000 (10 per problem)
-Correct paths:     1,192 (24%)
-Incorrect paths:   3,808 (76%)
-After preprocessing: 4,877 samples
-DPO pairs created: 2,125
-Training groups:   425
-Training epochs:   5
-Loss progression:  -0.0066 → -0.0106 → -0.0125 → -0.0149 → -0.0220
-Total time:        ~12 minutes on 2x H100
-```
 
 ## 🖥️ Hardware Requirements
 
