@@ -4,13 +4,13 @@ End-to-end GRPO (Group Relative Policy Optimization) pipeline for training reaso
 
 ## 🎯 Results
 
-Evaluated on GSM8K test set:
+Evaluated on full GSM8K test set (1319 problems):
 
 | Metric | Base Model | GRPO Trained | Improvement |
 |--------|------------|--------------|-------------|
-| Pass@1 | 42.5% | 69.0% | **+26.5%** |
-| Pass@4 | 74.5% | 88.0% | **+13.5%** |
-| Pass@8 | 82.0% | 92.5% | **+10.5%** |
+| Pass@1 | 44.7% | 74.0% | **+29.3%** |
+| Pass@4 | 75.1% | 88.0% | **+12.9%** |
+| Pass@8 | 84.2% | 92.6% | **+8.4%** |
 
 ## ⚡ Performance
 
@@ -128,9 +128,9 @@ PASS@K RESULTS
 ============================================================
 k        Accuracy     Tokens/s    
 ------------------------------------------------------------
-1          42.5%       21960
-4          74.5%       21960
-8          82.0%       21960
+1          44.7%       23322
+4          75.1%       23322
+8          84.2%       23322
 ```
 
 ### Step 5: Evaluate Trained Model
@@ -158,9 +158,9 @@ PASS@K RESULTS
 ============================================================
 k        Accuracy     Tokens/s    
 ------------------------------------------------------------
-1          69.0%       22432
-4          88.0%       22432
-8          92.5%       22432
+1          74.0%       24038
+4          88.0%       24038
+8          92.6%       24038
 ```
 
 ## 📁 Project Structure
@@ -229,6 +229,3 @@ distributed-reasoning-loop/
 - [GSM8K](https://arxiv.org/abs/2110.14168) - Math reasoning benchmark
 - [Prime Intellect](https://www.primeintellect.ai/) - Distributed RL infrastructure
 
-## 📄 License
-
-MIT
