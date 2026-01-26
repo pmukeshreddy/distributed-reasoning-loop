@@ -2,7 +2,7 @@
 
 End-to-end GRPO (Group Relative Policy Optimization) pipeline for training reasoning models. Implements DeepSeek-R1's approach: synthetic data generation, distributed verification, and RL training without reward models.
 
-## 🎯 Results
+##  Results
 
 Evaluated on full GSM8K test set (1319 problems):
 
@@ -12,7 +12,7 @@ Evaluated on full GSM8K test set (1319 problems):
 | Pass@4 | 75.1% | 88.0% | **+12.9%** |
 | Pass@8 | 84.2% | 92.6% | **+8.4%** |
 
-## ⚡ Performance
+##  Performance
 
 | Component | Metric | Value |
 |-----------|--------|-------|
@@ -22,7 +22,7 @@ Evaluated on full GSM8K test set (1319 problems):
 | **GRPO** | Trainable params | **0.07%** (LoRA) |
 | **Pipeline** | End-to-end | **~12 min** on 2x H100 |
 
-## 🏗️ Architecture
+##  Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -42,7 +42,7 @@ Evaluated on full GSM8K test set (1319 problems):
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## 🚀 Quick Start
+##  Quick Start
 
 ### Prerequisites
 
@@ -211,7 +211,7 @@ distributed-reasoning-loop/
 
 
 
-## 🖥️ Hardware Requirements
+##  Hardware Requirements
 
 - **GPU**: 2x H100 (80GB) or equivalent
 - **RAM**: 256GB+ recommended
