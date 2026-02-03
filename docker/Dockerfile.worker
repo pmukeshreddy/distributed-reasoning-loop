@@ -1,0 +1,29 @@
+# Ray Worker Dockerfile
+# Worker node for distributed data processing
+
+FROM python:3.11-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy source code
+COPY src/ ./src/
+COPY setup.py .
+RUN pip install -e .
+
+# Ray worker configuration
+ENV RAY_ADDRESS=auto
+ENV RAY_DASHBOARD_HOST=0.0.0.0
+
+# Default: start Ray worker
+CMD ["ray", "start", "--block", "--address=$RAY_ADDRESS"]

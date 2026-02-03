@@ -1,0 +1,31 @@
+# Code Execution Sandbox Dockerfile
+# Secure, isolated environment for running untrusted code
+
+FROM python:3.11-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    make \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user for security
+RUN useradd -m -s /bin/bash sandbox
+USER sandbox
+WORKDIR /home/sandbox
+
+# Install common Python packages for code execution
+RUN pip install --user --no-cache-dir \
+    numpy \
+    pandas \
+    scipy \
+    sympy \
+    networkx
+
+# Set resource limits
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Default command
+CMD ["python3"]

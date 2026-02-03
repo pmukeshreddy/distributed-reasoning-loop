@@ -1,0 +1,7 @@
+{
+  "total_problems": 200,
+  "total_paths_generated": 2000,
+  "correct_paths": 1325,
+  "incorrect_paths": 675,
+  "pairs_created": 3125
+}

@@ -1,0 +1,124 @@
+# Docker Compose for Distributed Reasoning Loop
+# Full pipeline deployment with all services
+
+version: '3.8'
+
+services:
+  # Kafka for data streaming
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+
+  # Kafka UI for monitoring
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - "8080:8080"
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_CLUSTERS_0_NAME: reasoning-loop
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+
+  # Ray Head Node
+  ray-head:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    command: >
+      ray start --head --port=6379 --dashboard-host=0.0.0.0 --block
+    ports:
+      - "8265:8265"  # Ray Dashboard
+      - "6379:6379"  # Ray GCS
+    environment:
+      RAY_ADDRESS: ray-head:6379
+    volumes:
+      - ray-data:/tmp/ray
+      - ../outputs:/app/outputs
+
+  # Ray Worker Nodes
+  ray-worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    command: >
+      ray start --address=ray-head:6379 --block
+    depends_on:
+      - ray-head
+    environment:
+      RAY_ADDRESS: ray-head:6379
+    deploy:
+      replicas: 2
+    volumes:
+      - ray-data:/tmp/ray
+
+  # Inference Server (vLLM)
+  inference:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.inference
+    ports:
+      - "8000:8000"
+    environment:
+      MODEL_NAME: ${MODEL_NAME:-Qwen/Qwen2.5-7B-Instruct}
+      CUDA_VISIBLE_DEVICES: 0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - model-cache:/root/.cache/huggingface
+
+  # Redis for caching (optional)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis-data:/data
+
+  # Weights & Biases agent (optional)
+  wandb-agent:
+    image: wandb/agent:latest
+    environment:
+      WANDB_API_KEY: ${WANDB_API_KEY}
+    volumes:
+      - ../outputs:/outputs
+
+volumes:
+  zookeeper-data:
+  kafka-data:
+  ray-data:
+  model-cache:
+  redis-data:
+
+networks:
+  default:
+    name: reasoning-loop-network
