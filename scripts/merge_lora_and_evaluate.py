@@ -163,7 +163,7 @@ def evaluate_pass_at_k(
     k_values: List[int] = [1, 4, 8],
     batch_size: int = 32,
     max_new_tokens: int = 1024,
-    temperature: float = 0.8,
+    temperature: float = 0.7,
 ) -> ModelResults:
     """
     Evaluate Pass@k for multiple k values.
@@ -366,7 +366,7 @@ def main():
     parser.add_argument("--num-problems", type=int, default=1319, help="Number of problems")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size")
     parser.add_argument("--max-tokens", type=int, default=1024)
-    parser.add_argument("--temperature", type=float, default=0.8, help="Sampling temperature")
+    parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature")
     parser.add_argument("--merge-only", action="store_true")
     parser.add_argument("--eval-only", action="store_true")
     parser.add_argument("--skip-base", action="store_true")
