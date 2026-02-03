@@ -1,23 +1,17 @@
 #!/usr/bin/env python3
 """
-Merge LoRA weights into base model and evaluate.
+Merge LoRA weights into base model and evaluate with BATCHED inference.
 
-This is the most reliable way to evaluate a LoRA-trained model when
-dynamic LoRA loading isn't supported by the inference server.
+This is the most reliable way to evaluate a LoRA-trained model.
+Uses batched inference for 5-10x speedup!
 
 Usage:
-    # Merge and save model
+    # Full evaluation with batching
     python scripts/merge_lora_and_evaluate.py \
         --base-model Qwen/Qwen2.5-1.5B-Instruct \
-        --lora-path ./outputs/continuous_grpo/lora_checkpoints/lora_v9 \
-        --output-path ./outputs/merged_model \
-        --merge-only
-    
-    # Full evaluation (merge + eval base + eval merged)
-    python scripts/merge_lora_and_evaluate.py \
-        --base-model Qwen/Qwen2.5-1.5B-Instruct \
-        --lora-path ./outputs/continuous_grpo/lora_checkpoints/lora_v9 \
-        --num-problems 100
+        --lora-path ./outputs/continuous_grpo/lora_checkpoints/lora_v10 \
+        --num-problems 1319 \
+        --batch-size 16
 """
 
 import argparse
@@ -47,6 +41,7 @@ class EvalResult:
     num_correct: int
     num_total: int
     avg_time_per_problem: float
+    total_time: float
     
     def to_dict(self) -> Dict:
         return {
@@ -55,6 +50,7 @@ class EvalResult:
             "num_correct": self.num_correct,
             "num_total": self.num_total,
             "avg_time_per_problem": round(self.avg_time_per_problem, 3),
+            "total_time": round(self.total_time, 2),
         }
 
 
@@ -91,11 +87,15 @@ def merge_lora_to_base(
     merged_model.save_pretrained(output_path)
     tokenizer.save_pretrained(output_path)
     
+    # Free memory
+    del base_model, model, merged_model
+    torch.cuda.empty_cache()
+    
     logger.info("✓ Merge complete!")
     return output_path
 
 
-def load_gsm8k(num_samples: int = 100) -> List[Dict]:
+def load_gsm8k(num_samples: int = 1319) -> List[Dict]:
     """Load GSM8K test set."""
     from datasets import load_dataset
     ds = load_dataset("openai/gsm8k", "main", split="test")
@@ -152,19 +152,20 @@ def check_correctness(response: str, ground_truth: str) -> bool:
         return extracted == gt_answer
 
 
-def evaluate_model(
+def evaluate_model_batched(
     model_path: str,
     problems: List[Dict],
     model_name: str,
-    device: str = "cuda",
+    batch_size: int = 16,
     max_new_tokens: int = 1024,
 ) -> EvalResult:
-    """Evaluate a model on the given problems."""
+    """Evaluate a model using BATCHED inference for speed."""
     from transformers import AutoModelForCausalLM, AutoTokenizer
     
     logger.info(f"\n{'='*60}")
     logger.info(f"Evaluating: {model_name}")
     logger.info(f"Model path: {model_path}")
+    logger.info(f"Batch size: {batch_size}")
     logger.info(f"{'='*60}")
     
     # Load model
@@ -182,28 +183,49 @@ def evaluate_model(
     
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "left"  # Important for batch generation
     
     model.eval()
     
     correct = 0
     total_time = 0
+    all_responses = []
     
-    for prob in tqdm(problems, desc=f"Evaluating {model_name}"):
-        prompt = prob["prompt"]
-        answer = prob["answer"]
+    # Process in batches
+    num_batches = (len(problems) + batch_size - 1) // batch_size
+    
+    for batch_idx in tqdm(range(num_batches), desc=f"Evaluating {model_name}"):
+        batch_start = batch_idx * batch_size
+        batch_end = min(batch_start + batch_size, len(problems))
+        batch_problems = problems[batch_start:batch_end]
         
-        # Format as chat
-        messages = [{"role": "user", "content": prompt}]
-        text = tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True
-        )
+        # Prepare batch
+        prompts = [p["prompt"] for p in batch_problems]
+        answers = [p["answer"] for p in batch_problems]
+        
+        # Format as chat messages
+        texts = []
+        for prompt in prompts:
+            messages = [{"role": "user", "content": prompt}]
+            text = tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True
+            )
+            texts.append(text)
         
         start_time = time.time()
         
-        inputs = tokenizer(text, return_tensors="pt").to(model.device)
+        # Tokenize batch
+        inputs = tokenizer(
+            texts,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=2048,
+        ).to(model.device)
         
+        # Generate batch
         with torch.no_grad():
             outputs = model.generate(
                 **inputs,
@@ -212,16 +234,27 @@ def evaluate_model(
                 pad_token_id=tokenizer.eos_token_id,
             )
         
-        response = tokenizer.decode(
-            outputs[0][inputs.input_ids.shape[1]:],
-            skip_special_tokens=True
-        )
-        
         elapsed = time.time() - start_time
         total_time += elapsed
         
-        if check_correctness(response, answer):
-            correct += 1
+        # Decode responses
+        for i, (output, answer) in enumerate(zip(outputs, answers)):
+            # Get only the generated part (after input)
+            input_len = inputs.input_ids[i].shape[0]
+            response = tokenizer.decode(
+                output[input_len:],
+                skip_special_tokens=True
+            )
+            all_responses.append(response)
+            
+            if check_correctness(response, answer):
+                correct += 1
+        
+        # Progress update every 10 batches
+        if (batch_idx + 1) % 10 == 0:
+            current_acc = correct / (batch_end) * 100
+            speed = batch_end / total_time
+            logger.info(f"Progress: {batch_end}/{len(problems)} | Acc: {current_acc:.1f}% | Speed: {speed:.1f} problems/s")
     
     accuracy = correct / len(problems) if problems else 0
     avg_time = total_time / len(problems) if problems else 0
@@ -236,49 +269,62 @@ def evaluate_model(
         num_correct=correct,
         num_total=len(problems),
         avg_time_per_problem=avg_time,
+        total_time=total_time,
     )
     
-    logger.info(f"\n{model_name} Results:")
-    logger.info(f"  Accuracy: {accuracy*100:.1f}%")
+    logger.info(f"\n{'='*60}")
+    logger.info(f"{model_name} FINAL RESULTS:")
+    logger.info(f"  Accuracy: {accuracy*100:.2f}%")
     logger.info(f"  Correct: {correct}/{len(problems)}")
-    logger.info(f"  Avg time: {avg_time:.2f}s per problem")
+    logger.info(f"  Total time: {total_time:.1f}s")
+    logger.info(f"  Speed: {len(problems)/total_time:.1f} problems/s")
+    logger.info(f"{'='*60}")
     
     return result
 
 
 def print_comparison(results: List[EvalResult]):
     """Print comparison table."""
-    print("\n" + "=" * 70)
-    print("EVALUATION RESULTS")
-    print("=" * 70)
-    print(f"{'Model':<40} {'Accuracy':<15} {'Correct'}")
-    print("-" * 70)
+    print("\n" + "=" * 80)
+    print("EVALUATION RESULTS - GSM8K FULL TEST SET")
+    print("=" * 80)
+    print(f"{'Model':<40} {'Accuracy':<15} {'Correct':<15} {'Time'}")
+    print("-" * 80)
     
     for r in results:
-        print(f"{r.model_name:<40} {r.accuracy*100:>6.1f}%        {r.num_correct}/{r.num_total}")
+        print(f"{r.model_name:<40} {r.accuracy*100:>6.2f}%        {r.num_correct:>4}/{r.num_total:<4}       {r.total_time:.1f}s")
     
-    print("=" * 70)
+    print("=" * 80)
     
     if len(results) >= 2:
         base_acc = results[0].accuracy
         trained_acc = results[-1].accuracy
         improvement = trained_acc - base_acc
         
-        print(f"\n📈 IMPROVEMENT: {improvement*100:+.1f}%")
-        print(f"   Base: {base_acc*100:.1f}% → Trained: {trained_acc*100:.1f}%")
+        print(f"\n📈 IMPROVEMENT: {improvement*100:+.2f}%")
+        print(f"   Base: {base_acc*100:.2f}% → Trained: {trained_acc*100:.2f}%")
+        
+        if improvement > 0:
+            print(f"   ✅ Training improved accuracy by {improvement*100:.1f} percentage points!")
+        elif improvement < 0:
+            print(f"   ⚠️ Training decreased accuracy")
+        else:
+            print(f"   ➡️ No change in accuracy")
     print()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Merge LoRA and Evaluate")
+    parser = argparse.ArgumentParser(description="Merge LoRA and Evaluate (Batched)")
     parser.add_argument("--base-model", type=str, default="Qwen/Qwen2.5-1.5B-Instruct")
     parser.add_argument("--lora-path", type=str, required=True, help="Path to LoRA checkpoint")
     parser.add_argument("--output-path", type=str, default="./outputs/merged_model")
-    parser.add_argument("--num-problems", type=int, default=100)
+    parser.add_argument("--num-problems", type=int, default=1319, help="Number of problems (1319 = full GSM8K test)")
+    parser.add_argument("--batch-size", type=int, default=16, help="Batch size for inference")
     parser.add_argument("--max-tokens", type=int, default=1024)
     parser.add_argument("--merge-only", action="store_true", help="Only merge, don't evaluate")
     parser.add_argument("--eval-only", action="store_true", help="Skip merge, just evaluate existing merged model")
-    parser.add_argument("--output", type=str, default="./eval_merged_results.json")
+    parser.add_argument("--skip-base", action="store_true", help="Skip base model evaluation")
+    parser.add_argument("--output", type=str, default="./eval_full_results.json")
     
     args = parser.parse_args()
     
@@ -294,8 +340,6 @@ def main():
     
     if args.merge_only:
         logger.info(f"\n✅ Merged model saved to: {merged_path}")
-        logger.info("To evaluate, run:")
-        logger.info(f"  python scripts/merge_lora_and_evaluate.py --lora-path {args.lora_path} --eval-only --output-path {merged_path}")
         return
     
     # Load dataset
@@ -306,27 +350,30 @@ def main():
     results = []
     
     # Evaluate base model
-    logger.info("\n" + "="*60)
-    logger.info("PHASE 1: Evaluating BASE MODEL")
-    logger.info("="*60)
-    
-    base_result = evaluate_model(
-        model_path=args.base_model,
-        problems=problems,
-        model_name="Base (Qwen2.5-1.5B-Instruct)",
-        max_new_tokens=args.max_tokens,
-    )
-    results.append(base_result)
+    if not args.skip_base:
+        logger.info("\n" + "="*60)
+        logger.info("PHASE 1: Evaluating BASE MODEL")
+        logger.info("="*60)
+        
+        base_result = evaluate_model_batched(
+            model_path=args.base_model,
+            problems=problems,
+            model_name="Base (Qwen2.5-1.5B-Instruct)",
+            batch_size=args.batch_size,
+            max_new_tokens=args.max_tokens,
+        )
+        results.append(base_result)
     
     # Evaluate merged model
     logger.info("\n" + "="*60)
     logger.info("PHASE 2: Evaluating TRAINED MODEL (Merged)")
     logger.info("="*60)
     
-    trained_result = evaluate_model(
+    trained_result = evaluate_model_batched(
         model_path=merged_path,
         problems=problems,
-        model_name=f"Trained (Merged LoRA)",
+        model_name=f"Trained (GRPO LoRA)",
+        batch_size=args.batch_size,
         max_new_tokens=args.max_tokens,
     )
     results.append(trained_result)
@@ -342,6 +389,7 @@ def main():
             "lora_path": args.lora_path,
             "merged_path": merged_path,
             "num_problems": args.num_problems,
+            "batch_size": args.batch_size,
         },
         "results": [r.to_dict() for r in results],
     }
