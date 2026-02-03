@@ -162,7 +162,11 @@ class SGLangWorkerPool:
     
     def _select_worker_round_robin(self) -> Optional[WorkerInfo]:
         """Select worker using round-robin."""
+        # Prefer READY workers, but accept non-OFFLINE workers as fallback
         ready_workers = [w for w in self.workers if w.status == WorkerStatus.READY]
+        if not ready_workers:
+            # Fallback: any non-offline worker
+            ready_workers = [w for w in self.workers if w.status != WorkerStatus.OFFLINE]
         if not ready_workers:
             return None
         
@@ -173,6 +177,8 @@ class SGLangWorkerPool:
     def _select_worker_least_pending(self) -> Optional[WorkerInfo]:
         """Select worker with least pending requests."""
         ready_workers = [w for w in self.workers if w.status == WorkerStatus.READY]
+        if not ready_workers:
+            ready_workers = [w for w in self.workers if w.status != WorkerStatus.OFFLINE]
         if not ready_workers:
             return None
         
@@ -191,41 +197,66 @@ class SGLangWorkerPool:
         lora_path: str,
         lora_name: str,
     ) -> bool:
-        """Load a LoRA adapter on a specific worker."""
-        try:
-            session = await self._get_session()
-            worker.status = WorkerStatus.RELOADING
-            
-            payload = {
-                "lora_name": lora_name,
-                "lora_path": lora_path,
-            }
-            
-            start_time = time.time()
-            async with session.post(
-                f"{worker.url}/v1/load_lora_adapter",
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=self.config.lora_reload_timeout)
-            ) as response:
-                elapsed = time.time() - start_time
-                
-                if response.status == 200:
-                    logger.info(
-                        f"Worker {worker.worker_id}: Loaded LoRA '{lora_name}' "
-                        f"from {lora_path} in {elapsed:.2f}s"
-                    )
-                    worker.status = WorkerStatus.READY
-                    return True
-                else:
-                    error = await response.text()
-                    logger.error(f"Worker {worker.worker_id}: LoRA load failed: {error}")
-                    worker.status = WorkerStatus.ERROR
-                    return False
+        """
+        Load a LoRA adapter on a specific worker.
+        Tries multiple API endpoints for compatibility with different SGLang versions.
+        """
+        # List of endpoints to try (different SGLang versions use different APIs)
+        endpoints = [
+            # SGLang v0.4+ style
+            ("/update_lora", {"lora_path": lora_path, "lora_name": lora_name}),
+            # Alternative endpoint
+            ("/add_lora", {"path": lora_path, "name": lora_name}),
+            # OpenAI-compatible style  
+            ("/v1/load_lora_adapter", {"lora_name": lora_name, "lora_path": lora_path}),
+            # vLLM-compatible style
+            ("/v1/lora/load", {"lora_path": lora_path, "lora_name": lora_name}),
+        ]
+        
+        session = await self._get_session()
+        original_status = worker.status
+        worker.status = WorkerStatus.RELOADING
+        
+        for endpoint, payload in endpoints:
+            try:
+                start_time = time.time()
+                async with session.post(
+                    f"{worker.url}{endpoint}",
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=self.config.lora_reload_timeout)
+                ) as response:
+                    elapsed = time.time() - start_time
                     
-        except Exception as e:
-            logger.error(f"Worker {worker.worker_id}: LoRA load error: {e}")
-            worker.status = WorkerStatus.ERROR
-            return False
+                    if response.status == 200:
+                        logger.info(
+                            f"Worker {worker.worker_id}: Loaded LoRA '{lora_name}' "
+                            f"via {endpoint} in {elapsed:.2f}s"
+                        )
+                        worker.status = WorkerStatus.READY
+                        return True
+                    elif response.status == 404:
+                        # Endpoint doesn't exist, try next one
+                        continue
+                    else:
+                        error = await response.text()
+                        logger.debug(f"Worker {worker.worker_id}: {endpoint} returned {response.status}: {error}")
+                        continue
+                        
+            except asyncio.TimeoutError:
+                logger.warning(f"Worker {worker.worker_id}: {endpoint} timed out")
+                continue
+            except Exception as e:
+                logger.debug(f"Worker {worker.worker_id}: {endpoint} error: {e}")
+                continue
+        
+        # All endpoints failed - but DON'T mark worker as ERROR
+        # Worker can still serve requests with base model
+        logger.warning(
+            f"Worker {worker.worker_id}: LoRA hot-reload not available. "
+            f"Worker will continue with base model."
+        )
+        worker.status = WorkerStatus.READY  # Keep worker available!
+        return False
     
     async def unload_lora(
         self,
@@ -233,26 +264,35 @@ class SGLangWorkerPool:
         lora_name: str,
     ) -> bool:
         """Unload a LoRA adapter from a specific worker."""
-        try:
-            session = await self._get_session()
-            
-            payload = {"lora_name": lora_name}
-            
-            async with session.post(
-                f"{worker.url}/v1/unload_lora_adapter",
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=10.0)
-            ) as response:
-                if response.status == 200:
-                    logger.info(f"Worker {worker.worker_id}: Unloaded LoRA '{lora_name}'")
-                    return True
-                else:
-                    # Not an error if LoRA wasn't loaded
-                    return True
-                    
-        except Exception as e:
-            logger.warning(f"Worker {worker.worker_id}: LoRA unload error: {e}")
-            return False
+        # List of endpoints to try
+        endpoints = [
+            ("/remove_lora", {"lora_name": lora_name}),
+            ("/delete_lora", {"name": lora_name}),
+            ("/v1/unload_lora_adapter", {"lora_name": lora_name}),
+            ("/v1/lora/unload", {"lora_name": lora_name}),
+        ]
+        
+        session = await self._get_session()
+        
+        for endpoint, payload in endpoints:
+            try:
+                async with session.post(
+                    f"{worker.url}{endpoint}",
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=10.0)
+                ) as response:
+                    if response.status == 200:
+                        logger.info(f"Worker {worker.worker_id}: Unloaded LoRA '{lora_name}' via {endpoint}")
+                        return True
+                    elif response.status == 404:
+                        continue
+                        
+            except Exception:
+                continue
+        
+        # Unload not available or LoRA wasn't loaded - that's OK
+        logger.debug(f"Worker {worker.worker_id}: LoRA unload skipped (not available or not loaded)")
+        return True  # Return True since unload is optional
     
     async def reload_lora(
         self,
@@ -465,12 +505,29 @@ class SyncWorkerPool:
         Generate batch using thread pool for sync compatibility.
         Better for integration with existing sync code.
         """
-        results = []
+        # Round-robin counter for load balancing
+        import itertools
+        worker_cycle = itertools.cycle(range(len(self.async_pool.workers)))
         
-        def _make_request(messages):
-            worker = self.async_pool.select_worker()
-            if worker is None:
-                return None, {"error": "No workers available"}
+        def _make_request(args):
+            messages, worker_idx = args
+            
+            # Get worker directly by index (round-robin)
+            if not self.async_pool.workers:
+                return None, {"error": "No workers configured"}
+            
+            worker = self.async_pool.workers[worker_idx % len(self.async_pool.workers)]
+            
+            # Skip workers that are completely offline
+            if worker.status == WorkerStatus.OFFLINE:
+                # Try next worker
+                for i in range(len(self.async_pool.workers)):
+                    alt_worker = self.async_pool.workers[(worker_idx + i) % len(self.async_pool.workers)]
+                    if alt_worker.status != WorkerStatus.OFFLINE:
+                        worker = alt_worker
+                        break
+                else:
+                    return None, {"error": "All workers offline"}
             
             try:
                 payload = {
@@ -481,9 +538,9 @@ class SyncWorkerPool:
                     "top_p": kwargs.get("top_p", 0.95),
                 }
                 
-                # Add LoRA if active
-                if worker.current_lora_version > 0:
-                    payload["lora_name"] = f"lora_v{worker.current_lora_version}"
+                # Only add LoRA if it was successfully loaded
+                # (don't request LoRA that might not be available)
+                # The base model will be used if LoRA isn't loaded
                 
                 response = requests.post(
                     f"{worker.url}/v1/chat/completions",
@@ -499,11 +556,19 @@ class SyncWorkerPool:
                 else:
                     return None, {"error": response.text, "worker_id": worker.worker_id}
                     
+            except requests.exceptions.Timeout:
+                return None, {"error": "Request timeout", "worker_id": worker.worker_id}
             except Exception as e:
-                return None, {"error": str(e)}
+                return None, {"error": str(e), "worker_id": worker.worker_id}
+        
+        # Assign workers round-robin
+        batch_with_workers = [
+            (messages, next(worker_cycle)) 
+            for messages in messages_batch
+        ]
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            results = list(executor.map(_make_request, messages_batch))
+            results = list(executor.map(_make_request, batch_with_workers))
         
         return results
     

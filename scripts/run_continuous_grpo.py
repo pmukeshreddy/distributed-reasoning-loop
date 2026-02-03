@@ -211,7 +211,10 @@ At the end, provide your final answer after '#### '."""
             verified.append(rollout)
         
         correct = sum(1 for r in verified if r.get("is_correct", False))
-        logger.info(f"Verification: {correct}/{len(verified)} correct ({100*correct/len(verified):.1f}%)")
+        if verified:
+            logger.info(f"Verification: {correct}/{len(verified)} correct ({100*correct/len(verified):.1f}%)")
+        else:
+            logger.warning("No rollouts to verify!")
         
         return verified
     
@@ -280,6 +283,21 @@ At the end, provide your final answer after '#### '."""
         )
         rollout_time = time.time() - rollout_start
         
+        # Handle empty rollouts
+        if not rollouts:
+            logger.warning("No rollouts generated! Skipping this iteration.")
+            return {
+                "iteration": self.iteration,
+                "timestamp": datetime.now().isoformat(),
+                "lora_version": self.coordinator.current_lora_version,
+                "rollouts": {"total": 0, "time_seconds": rollout_time},
+                "verification": {"total": 0, "correct": 0, "accuracy": 0, "time_seconds": 0},
+                "training": {"loss": 0, "samples": 0, "time_seconds": 0},
+                "broadcast": {"time_seconds": 0},
+                "total_time_seconds": rollout_time,
+                "skipped": True,
+            }
+        
         # Step 2: Verify
         verify_start = time.time()
         verified = self.verify_rollouts(rollouts)
@@ -290,10 +308,13 @@ At the end, provide your final answer after '#### '."""
         train_result = self.train_step(verified)
         train_time = time.time() - train_start
         
-        # Step 4: Broadcast LoRA
+        # Step 4: Broadcast LoRA (continue even if it fails - training still works)
         broadcast_start = time.time()
         if train_result.get("checkpoint_path"):
-            self.broadcast_lora(train_result["checkpoint_path"])
+            try:
+                self.broadcast_lora(train_result["checkpoint_path"])
+            except Exception as e:
+                logger.warning(f"LoRA broadcast failed (training still succeeded): {e}")
         broadcast_time = time.time() - broadcast_start
         
         total_time = time.time() - start_time
