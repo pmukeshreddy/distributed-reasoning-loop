@@ -258,6 +258,57 @@ class SGLangWorkerPool:
         worker.status = WorkerStatus.READY  # Keep worker available!
         return False
     
+    async def update_weights_from_disk(
+        self,
+        worker: WorkerInfo,
+        model_path: str,
+    ) -> bool:
+        """
+        Update model weights from disk using SGLang's /update_weights_from_disk endpoint.
+        This expects MERGED weights, not raw LoRA adapters.
+        
+        Args:
+            worker: Worker to update
+            model_path: Path to merged model checkpoint
+            
+        Returns:
+            True if successful
+        """
+        session = await self._get_session()
+        worker.status = WorkerStatus.RELOADING
+        
+        try:
+            start_time = time.time()
+            async with session.post(
+                f"{worker.url}/update_weights_from_disk",
+                json={"model_path": model_path},
+                timeout=aiohttp.ClientTimeout(total=60.0)  # Longer timeout for weight loading
+            ) as response:
+                elapsed = time.time() - start_time
+                
+                if response.status == 200:
+                    result = await response.json()
+                    if result.get("success"):
+                        logger.info(
+                            f"Worker {worker.worker_id}: Updated weights from {model_path} "
+                            f"in {elapsed:.2f}s"
+                        )
+                        worker.status = WorkerStatus.READY
+                        return True
+                    else:
+                        logger.warning(f"Worker {worker.worker_id}: Weight update failed: {result}")
+                else:
+                    error = await response.text()
+                    logger.warning(f"Worker {worker.worker_id}: Weight update returned {response.status}: {error}")
+                    
+        except asyncio.TimeoutError:
+            logger.warning(f"Worker {worker.worker_id}: Weight update timed out")
+        except Exception as e:
+            logger.warning(f"Worker {worker.worker_id}: Weight update error: {e}")
+        
+        worker.status = WorkerStatus.READY  # Keep worker available
+        return False
+    
     async def unload_lora(
         self,
         worker: WorkerInfo,
@@ -474,6 +525,41 @@ class SyncWorkerPool:
             return {w.worker_id: r for w, r in zip(self.async_pool.workers, results)}
         
         return loop.run_until_complete(_reload_all())
+    
+    def update_weights_all(
+        self,
+        model_path: str,
+        version: int,
+    ) -> Dict[int, bool]:
+        """
+        Update weights on all workers using /update_weights_from_disk.
+        This expects a MERGED model checkpoint, not raw LoRA adapters.
+        
+        Args:
+            model_path: Path to merged model checkpoint
+            version: Version number for tracking
+            
+        Returns:
+            Dict mapping worker_id to success status
+        """
+        loop = self._get_loop()
+        
+        async def _update_all():
+            tasks = [
+                self.async_pool.update_weights_from_disk(w, model_path)
+                for w in self.async_pool.workers
+            ]
+            results = await asyncio.gather(*tasks)
+            
+            # Update version tracking on successful workers
+            for worker, success in zip(self.async_pool.workers, results):
+                if success:
+                    worker.current_lora_version = version
+                    worker.current_lora_path = model_path
+            
+            return {w.worker_id: r for w, r in zip(self.async_pool.workers, results)}
+        
+        return loop.run_until_complete(_update_all())
     
     def generate(
         self,

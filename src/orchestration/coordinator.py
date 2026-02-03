@@ -234,6 +234,47 @@ class TrainingCoordinator:
         
         return results
     
+    def broadcast_merged_weights(
+        self,
+        merged_path: str,
+        version: int,
+    ) -> Dict[int, bool]:
+        """
+        Broadcast merged model weights to all workers using /update_weights_from_disk.
+        
+        This is the correct approach for SGLang - it expects merged weights,
+        not raw PEFT LoRA adapters.
+        
+        Args:
+            merged_path: Path to merged model checkpoint
+            version: Version number for tracking
+            
+        Returns:
+            Dict mapping worker_id to success status
+        """
+        logger.info(f"Broadcasting merged weights v{version} to all workers...")
+        start_time = time.time()
+        
+        results = self.worker_pool.update_weights_all(
+            model_path=merged_path,
+            version=version,
+        )
+        
+        elapsed = time.time() - start_time
+        success_count = sum(1 for r in results.values() if r)
+        
+        logger.info(
+            f"Weight update complete: {success_count}/{len(results)} workers "
+            f"updated in {elapsed:.2f}s"
+        )
+        
+        # Log any failures
+        for worker_id, success in results.items():
+            if not success:
+                logger.warning(f"Worker {worker_id} failed to reload LoRA")
+        
+        return results
+    
     def verify_all_workers_synced(self, expected_version: int) -> bool:
         """Verify all workers are on the expected LoRA version."""
         for worker in self.worker_pool.workers:

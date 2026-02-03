@@ -249,17 +249,39 @@ At the end, provide your final answer after '#### '."""
         }
     
     def broadcast_lora(self, checkpoint_path: str) -> bool:
-        """Broadcast new LoRA to all workers."""
+        """Broadcast new LoRA weights to all workers using delta format."""
+        from training.lora_converter import LoRAFormatConverter
+        
         checkpoint = self.coordinator.save_lora_checkpoint(
             lora_path=checkpoint_path,
             metrics={"iteration": self.iteration},
         )
         
-        results = self.coordinator.broadcast_lora_update(checkpoint)
-        success = all(results.values())
+        # Convert PEFT LoRA to SGLang delta format
+        try:
+            converter = LoRAFormatConverter(self.model_name)
+            sglang_path = converter.peft_to_sglang(
+                checkpoint_path,
+                version=checkpoint.version,
+            )
+            
+            # Broadcast delta weights to all workers
+            results = self.coordinator.broadcast_merged_weights(
+                merged_path=sglang_path,
+                version=checkpoint.version,
+            )
+            
+            # Cleanup old conversions
+            converter.cleanup_old_versions(keep_last=3)
+            
+        except Exception as e:
+            logger.warning(f"Delta conversion failed: {e}, trying direct LoRA update")
+            results = self.coordinator.broadcast_lora_update(checkpoint)
+        
+        success = all(results.values()) if results else False
         
         if success:
-            logger.info(f"All workers updated to LoRA v{checkpoint.version}")
+            logger.info(f"All workers updated to v{checkpoint.version}")
         else:
             failed = [k for k, v in results.items() if not v]
             logger.warning(f"Workers {failed} failed to update")
@@ -314,7 +336,7 @@ At the end, provide your final answer after '#### '."""
             try:
                 self.broadcast_lora(train_result["checkpoint_path"])
             except Exception as e:
-                logger.warning(f"LoRA broadcast failed (training still succeeded): {e}")
+                logger.warning(f"Weight update failed (training still succeeded): {e}")
         broadcast_time = time.time() - broadcast_start
         
         total_time = time.time() - start_time

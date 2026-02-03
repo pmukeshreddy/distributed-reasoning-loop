@@ -14,6 +14,12 @@ from .grpo_trainer import (
     ReasoningGRPOTrainer,
 )
 
+from .lora_converter import (
+    LoRAFormatConverter,
+    convert_peft_to_sglang_delta,
+    convert_peft_to_merged_checkpoint,
+)
+
 from .reward_model import (
     RewardModel,
     RewardModelConfig,
@@ -34,6 +40,10 @@ __all__ = [
     # GRPO
     "GRPOConfig",
     "ReasoningGRPOTrainer",
+    # LoRA Converter
+    "LoRAFormatConverter",
+    "convert_peft_to_sglang_delta",
+    "convert_peft_to_merged_checkpoint",
     # Reward Model
     "RewardModel",
     "RewardModelConfig",
